@@ -1,9 +1,17 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+  import Sidebar from "./lib/components/Sidebar.svelte";
+  import { loadSpaces } from "./lib/stores/spaces";
+  import { initTitleListener } from "./lib/stores/apps";
+
+  onMount(async () => {
+    await loadSpaces();
+    await initTitleListener();
+  });
 </script>
 
 <main>
-  <h1>WebApps</h1>
-  <p>Loading...</p>
+  <Sidebar />
 </main>
 
 <style>
@@ -28,9 +36,6 @@
 
   main {
     height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    overflow: hidden;
   }
 </style>
