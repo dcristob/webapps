@@ -51,6 +51,12 @@ pub fn run() {
             commands::apps::edit_app,
             commands::apps::reorder_apps,
             commands::apps::get_apps_for_space,
+            commands::webviews::open_app,
+            commands::webviews::switch_to_app,
+            commands::webviews::close_app,
+            commands::webviews::hide_all_app_webviews,
+            commands::webviews::get_active_app,
+            commands::favicon::fetch_site_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
