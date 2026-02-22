@@ -2,26 +2,53 @@
   import { emit } from "@tauri-apps/api/event";
   import { open } from "@tauri-apps/plugin-dialog";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { editApp, fetchSiteInfo, closeDialog } from "../api";
+  import { addApp, editApp, fetchSiteInfo, closeDialog } from "../api";
 
-  let { spaceId, appId, initialName, initialUrl, initialIcon }: {
+  let { mode, spaceId, appId, initialName, initialUrl, initialIcon }: {
+    mode: "add" | "edit";
     spaceId: string;
-    appId: string;
-    initialName: string;
-    initialUrl: string;
-    initialIcon: string;
+    appId?: string;
+    initialName?: string;
+    initialUrl?: string;
+    initialIcon?: string;
   } = $props();
 
-  let name = $state(initialName);
-  let url = $state(initialUrl);
-  let icon = $state(initialIcon);
-  let fetchingFavicon = $state(false);
+  let url = $state(initialUrl ?? "");
+  let name = $state(initialName ?? "");
+  let icon = $state(initialIcon ?? "auto");
+  let loading = $state(false);
+  let fetched = $state(mode === "edit");
 
   let iconPreviewSrc = $derived(
     icon && icon !== "auto"
       ? (icon.startsWith("/") ? convertFileSrc(icon) : icon)
       : null
   );
+
+  async function handleFetchInfo() {
+    if (!url.trim()) return;
+    let normalizedUrl = url.trim();
+    if (!normalizedUrl.startsWith("http://") && !normalizedUrl.startsWith("https://")) {
+      normalizedUrl = "https://" + normalizedUrl;
+      url = normalizedUrl;
+    }
+    loading = true;
+    try {
+      const [title, fetchedIcon] = await fetchSiteInfo(normalizedUrl);
+      name = title;
+      icon = fetchedIcon;
+      fetched = true;
+    } catch {
+      try {
+        const parsed = new URL(normalizedUrl);
+        name = parsed.hostname;
+      } catch {
+        name = normalizedUrl;
+      }
+      fetched = true;
+    }
+    loading = false;
+  }
 
   async function handleChooseIcon() {
     const selected = await open({
@@ -35,24 +62,29 @@
 
   async function handleRefetchFavicon() {
     if (!url.trim()) return;
-    fetchingFavicon = true;
+    loading = true;
     try {
       const [, fetchedIcon] = await fetchSiteInfo(url.trim());
       icon = fetchedIcon;
     } catch {
       // Keep current icon on error
     }
-    fetchingFavicon = false;
+    loading = false;
   }
 
-  async function handleSave() {
-    if (!name.trim()) return;
-    await editApp(spaceId, appId, {
-      name: name.trim(),
-      url: url.trim() || undefined,
-      icon: icon || undefined,
-    });
-    await emit("dialog-result", { type: "app-edited" });
+  async function handleSubmit() {
+    if (!name.trim() || !url.trim()) return;
+    if (mode === "add") {
+      await addApp(spaceId, name.trim(), url.trim(), icon !== "auto" ? icon : undefined);
+      await emit("dialog-result", { type: "app-added" });
+    } else {
+      await editApp(spaceId, appId!, {
+        name: name.trim(),
+        url: url.trim(),
+        icon: icon || undefined,
+      });
+      await emit("dialog-result", { type: "app-edited" });
+    }
     await closeDialog();
   }
 
@@ -68,38 +100,45 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="dialog">
-  <h3>Edit App</h3>
-
-  <label>
-    Name
-    <input bind:value={name} placeholder="App name" onkeydown={(e) => e.key === "Enter" && handleSave()} autofocus />
-  </label>
+  <h3>{mode === "add" ? "Add App" : "Edit App"}</h3>
 
   <label>
     URL
-    <input bind:value={url} placeholder="https://example.com" onkeydown={(e) => e.key === "Enter" && handleSave()} />
+    <div class="url-row">
+      <input bind:value={url} placeholder="https://example.com" onkeydown={(e) => e.key === "Enter" && (fetched ? handleSubmit() : handleFetchInfo())} autofocus={mode === "add"} />
+      <button onclick={handleFetchInfo} disabled={loading}>{loading ? "..." : "Fetch"}</button>
+    </div>
   </label>
 
-  <div class="icon-section">
-    <span class="icon-label">Icon</span>
-    <div class="icon-row">
-      <div class="icon-preview">
-        {#if iconPreviewSrc}
-          <img src={iconPreviewSrc} alt="" width="32" height="32" />
-        {:else}
-          <span class="icon-placeholder">{name.charAt(0).toUpperCase()}</span>
-        {/if}
+  {#if fetched}
+    <label>
+      Name
+      <input bind:value={name} placeholder="App name" onkeydown={(e) => e.key === "Enter" && handleSubmit()} autofocus={mode === "edit"} />
+    </label>
+
+    <div class="icon-section">
+      <span class="icon-label">Icon</span>
+      <div class="icon-row">
+        <div class="icon-preview">
+          {#if iconPreviewSrc}
+            <img src={iconPreviewSrc} alt="" width="32" height="32" />
+          {:else}
+            <span class="icon-placeholder">{(name || "?").charAt(0).toUpperCase()}</span>
+          {/if}
+        </div>
+        <button class="icon-btn" onclick={handleChooseIcon}>Choose file...</button>
+        <button class="icon-btn" onclick={handleRefetchFavicon} disabled={loading}>
+          {loading ? "..." : "Re-fetch"}
+        </button>
       </div>
-      <button class="icon-btn" onclick={handleChooseIcon}>Choose file...</button>
-      <button class="icon-btn" onclick={handleRefetchFavicon} disabled={fetchingFavicon}>
-        {fetchingFavicon ? "..." : "Re-fetch"}
-      </button>
     </div>
-  </div>
+  {/if}
 
   <div class="actions">
     <button class="cancel" onclick={handleCancel}>Cancel</button>
-    <button class="save" onclick={handleSave} disabled={!name.trim()}>Save</button>
+    <button class="submit" onclick={handleSubmit} disabled={!fetched || !name.trim()}>
+      {mode === "add" ? "Add" : "Save"}
+    </button>
   </div>
 </div>
 
@@ -120,6 +159,12 @@
     display: block; width: 100%; margin-top: 4px; padding: 8px;
     background: var(--bg-secondary, #2a2a2a); color: var(--text-primary, #fff);
     border: 1px solid var(--border-color, #444); border-radius: 4px; box-sizing: border-box;
+  }
+  .url-row { display: flex; gap: 6px; }
+  .url-row input { flex: 1; }
+  .url-row button {
+    padding: 8px 12px; background: var(--accent, #4a9eff); color: #fff;
+    border: none; border-radius: 4px; cursor: pointer; white-space: nowrap;
   }
   .icon-section { margin-bottom: 12px; }
   .icon-label { color: var(--text-secondary, #aaa); font-size: 13px; }
@@ -148,9 +193,9 @@
     padding: 8px 16px; background: transparent; color: var(--text-secondary, #aaa);
     border: 1px solid var(--border-color, #444); border-radius: 4px; cursor: pointer;
   }
-  .save {
+  .submit {
     padding: 8px 16px; background: var(--accent, #4a9eff); color: #fff;
     border: none; border-radius: 4px; cursor: pointer;
   }
-  .save:disabled { opacity: 0.5; cursor: not-allowed; }
+  .submit:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

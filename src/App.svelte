@@ -2,8 +2,7 @@
   import { onMount } from "svelte";
   import Sidebar from "./lib/components/Sidebar.svelte";
   import TopBar from "./lib/components/TopBar.svelte";
-  import AddAppDialog from "./lib/components/AddAppDialog.svelte";
-  import EditAppDialog from "./lib/components/EditAppDialog.svelte";
+  import AppDialog from "./lib/components/AppDialog.svelte";
   import CreateSpaceDialog from "./lib/components/CreateSpaceDialog.svelte";
   import { loadSpaces } from "./lib/stores/spaces";
   import { initTitleListener } from "./lib/stores/apps";
@@ -29,9 +28,10 @@
 </script>
 
 {#if dialogMode === "add-app"}
-  <AddAppDialog spaceId={dialogSpaceId} />
+  <AppDialog mode="add" spaceId={dialogSpaceId} />
 {:else if dialogMode === "edit-app"}
-  <EditAppDialog
+  <AppDialog
+    mode="edit"
     spaceId={dialogSpaceId}
     appId={dialogAppId}
     initialName={dialogAppName}
