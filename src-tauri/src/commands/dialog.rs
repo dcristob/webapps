@@ -1,11 +1,11 @@
+use std::collections::HashMap;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const DIALOG_WIDTH: f64 = 450.0;
 const DIALOG_HEIGHT: f64 = 300.0;
 
 #[tauri::command]
-pub fn show_dialog(app_handle: AppHandle, dialog_type: String, space_id: Option<String>) -> Result<(), String> {
-    // If dialog already exists, focus it
+pub fn show_dialog(app_handle: AppHandle, dialog_type: String, space_id: Option<String>, params: Option<HashMap<String, String>>) -> Result<(), String> {
     if let Some(existing) = app_handle.get_webview_window("dialog") {
         existing.set_focus().map_err(|e| e.to_string())?;
         return Ok(());
@@ -15,14 +15,19 @@ pub fn show_dialog(app_handle: AppHandle, dialog_type: String, space_id: Option<
     if let Some(sid) = space_id {
         url.push_str(&format!("&spaceId={}", sid));
     }
+    if let Some(extra) = params {
+        for (key, value) in extra {
+            url.push_str(&format!("&{}={}", key, urlencoding::encode(&value)));
+        }
+    }
 
     let title = match dialog_type.as_str() {
         "add-app" => "Add App",
+        "edit-app" => "Edit App",
         "create-space" => "New Space",
         _ => "Dialog",
     };
 
-    // Center dialog on the main window
     let main_window = app_handle.get_window("main").ok_or("Main window not found")?;
     let win_pos = main_window.outer_position().map_err(|e| e.to_string())?;
     let win_size = main_window.outer_size().map_err(|e| e.to_string())?;

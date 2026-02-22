@@ -91,8 +91,8 @@ export async function fetchSiteInfo(url: string): Promise<[string, string]> {
 }
 
 // Dialog
-export async function showDialog(dialogType: string, spaceId?: string): Promise<void> {
-  return invoke("show_dialog", { dialogType, spaceId: spaceId ?? null });
+export async function showDialog(dialogType: string, spaceId?: string, params?: Record<string, string>): Promise<void> {
+  return invoke("show_dialog", { dialogType, spaceId: spaceId ?? null, params: params ?? null });
 }
 
 export async function closeDialog(): Promise<void> {
