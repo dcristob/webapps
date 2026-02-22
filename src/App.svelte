@@ -3,6 +3,7 @@
   import Sidebar from "./lib/components/Sidebar.svelte";
   import TopBar from "./lib/components/TopBar.svelte";
   import AddAppDialog from "./lib/components/AddAppDialog.svelte";
+  import EditAppDialog from "./lib/components/EditAppDialog.svelte";
   import CreateSpaceDialog from "./lib/components/CreateSpaceDialog.svelte";
   import { loadSpaces } from "./lib/stores/spaces";
   import { initTitleListener } from "./lib/stores/apps";
@@ -11,6 +12,10 @@
   const mode = params.get("mode");
   const dialogMode = params.get("dialog");
   const dialogSpaceId = params.get("spaceId") ?? "";
+  const dialogAppId = params.get("appId") ?? "";
+  const dialogAppName = decodeURIComponent(params.get("name") ?? "");
+  const dialogAppUrl = decodeURIComponent(params.get("url") ?? "");
+  const dialogAppIcon = decodeURIComponent(params.get("icon") ?? "auto");
 
   onMount(async () => {
     // Sidebar mode: load spaces and init title listener
@@ -25,6 +30,14 @@
 
 {#if dialogMode === "add-app"}
   <AddAppDialog spaceId={dialogSpaceId} />
+{:else if dialogMode === "edit-app"}
+  <EditAppDialog
+    spaceId={dialogSpaceId}
+    appId={dialogAppId}
+    initialName={dialogAppName}
+    initialUrl={dialogAppUrl}
+    initialIcon={dialogAppIcon}
+  />
 {:else if dialogMode === "create-space"}
   <CreateSpaceDialog />
 {:else if mode === "topbar"}

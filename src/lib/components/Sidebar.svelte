@@ -19,6 +19,18 @@
           await removeExistingApp(event.payload.space_id, event.payload.app_id, false);
         }
       ),
+      await listen<{ space_id: string; app_id: string; name: string; url: string; icon: string }>(
+        "context-menu-edit-app",
+        async (event) => {
+          const { space_id, app_id, name, url, icon } = event.payload;
+          await showDialog("edit-app", space_id, {
+            appId: app_id,
+            name,
+            url,
+            icon,
+          });
+        }
+      ),
     );
   });
 
