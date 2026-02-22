@@ -117,17 +117,35 @@ pub fn run() {
             Ok(())
         })
         .on_menu_event(|app_handle, event| {
-            if event.id().as_ref() == "ctx-remove-app" {
-                let state = app_handle.state::<AppState>();
-                let target = {
-                    let mut guard = state.context_menu_target.lock().unwrap();
-                    guard.take()
-                };
-                if let Some((space_id, app_id)) = target {
-                    let _ = app_handle.emit("context-menu-remove-app", serde_json::json!({
-                        "space_id": space_id,
-                        "app_id": app_id,
-                    }));
+            let state = app_handle.state::<AppState>();
+            let target = {
+                let mut guard = state.context_menu_target.lock().unwrap();
+                guard.take()
+            };
+
+            if let Some((space_id, app_id)) = target {
+                match event.id().as_ref() {
+                    "ctx-remove-app" => {
+                        let _ = app_handle.emit("context-menu-remove-app", serde_json::json!({
+                            "space_id": space_id,
+                            "app_id": app_id,
+                        }));
+                    }
+                    "ctx-edit-app" => {
+                        let spaces = state.spaces.lock().unwrap();
+                        if let Some(space) = spaces.iter().find(|s| s.space.id == space_id) {
+                            if let Some(app) = space.apps.iter().find(|a| a.id == app_id) {
+                                let _ = app_handle.emit("context-menu-edit-app", serde_json::json!({
+                                    "space_id": space_id,
+                                    "app_id": app_id,
+                                    "name": app.name,
+                                    "url": app.url,
+                                    "icon": app.icon,
+                                }));
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         })

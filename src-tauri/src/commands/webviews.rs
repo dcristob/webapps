@@ -199,9 +199,11 @@ pub fn show_app_context_menu(app_handle: AppHandle, space_id: String, app_id: St
 
     let window = app_handle.get_window("main").ok_or("Main window not found")?;
 
+    let edit_item = MenuItem::with_id(&app_handle, "ctx-edit-app", "Edit", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
     let remove_item = MenuItem::with_id(&app_handle, "ctx-remove-app", "Remove", true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let menu = Menu::with_items(&app_handle, &[&remove_item])
+    let menu = Menu::with_items(&app_handle, &[&edit_item, &remove_item])
         .map_err(|e| e.to_string())?;
 
     menu.popup(window).map_err(|e| e.to_string())?;
