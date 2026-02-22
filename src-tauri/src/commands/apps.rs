@@ -6,12 +6,12 @@ use crate::config::storage;
 use crate::state::AppState;
 
 #[tauri::command]
-pub fn add_app(space_id: String, name: String, url: String, state: State<'_, AppState>) -> Result<AppConfig, String> {
+pub fn add_app(space_id: String, name: String, url: String, icon: Option<String>, state: State<'_, AppState>) -> Result<AppConfig, String> {
     let app = AppConfig {
         id: Uuid::new_v4().to_string(),
         name,
         url,
-        icon: "auto".to_string(),
+        icon: icon.unwrap_or_else(|| "auto".to_string()),
         isolation_override: false,
     };
     let mut spaces = state.spaces.lock().map_err(|e| e.to_string())?;

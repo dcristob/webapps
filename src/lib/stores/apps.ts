@@ -6,8 +6,8 @@ import * as api from "../api";
 export const activeAppId = writable<string | null>(null);
 export const notificationBadges = writable<Record<string, number>>({});
 
-export async function addNewApp(spaceId: string, name: string, url: string) {
-  const app = await api.addApp(spaceId, name, url);
+export async function addNewApp(spaceId: string, name: string, url: string, icon?: string) {
+  const app = await api.addApp(spaceId, name, url, icon);
   const { loadSpaces } = await import("./spaces");
   await loadSpaces();
   return app;

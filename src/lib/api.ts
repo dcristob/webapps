@@ -31,8 +31,8 @@ export async function setSpaceIsolation(spaceId: string, mode: "shared" | "per-a
 }
 
 // App commands
-export async function addApp(spaceId: string, name: string, url: string): Promise<AppConfig> {
-  return invoke("add_app", { spaceId, name, url });
+export async function addApp(spaceId: string, name: string, url: string, icon?: string): Promise<AppConfig> {
+  return invoke("add_app", { spaceId, name, url, icon: icon ?? null });
 }
 
 export async function removeApp(spaceId: string, appId: string, deleteData: boolean): Promise<void> {
@@ -72,7 +72,29 @@ export async function getActiveApp(): Promise<string | null> {
   return invoke("get_active_app");
 }
 
+export async function showAppContextMenu(spaceId: string, appId: string): Promise<void> {
+  return invoke("show_app_context_menu", { spaceId, appId });
+}
+
+// Navigation
+export async function webviewGoBack(): Promise<void> {
+  return invoke("webview_go_back");
+}
+
+export async function webviewReload(): Promise<void> {
+  return invoke("webview_reload");
+}
+
 // Favicon
 export async function fetchSiteInfo(url: string): Promise<[string, string]> {
   return invoke("fetch_site_info", { url });
+}
+
+// Dialog
+export async function showDialog(dialogType: string, spaceId?: string): Promise<void> {
+  return invoke("show_dialog", { dialogType, spaceId: spaceId ?? null });
+}
+
+export async function closeDialog(): Promise<void> {
+  return invoke("close_dialog");
 }

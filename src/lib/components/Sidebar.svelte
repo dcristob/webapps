@@ -1,38 +1,41 @@
 <script lang="ts">
-  import SpaceSwitcher from "./SpaceSwitcher.svelte";
+  import { onMount, onDestroy } from "svelte";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import AppItem from "./AppItem.svelte";
-  import AddAppDialog from "./AddAppDialog.svelte";
-  import { activeSpace, activeSpaceId } from "../stores/spaces";
-  import { addNewApp, openExistingApp, removeExistingApp, reorderExistingApps } from "../stores/apps";
+  import { activeSpace, activeSpaceId, loadSpaces } from "../stores/spaces";
+  import { openExistingApp, removeExistingApp, reorderExistingApps } from "../stores/apps";
+  import { showDialog, showAppContextMenu } from "../api";
   import type { AppConfig } from "../types";
 
-  let showAddDialog = $state(false);
-  let contextMenuApp: AppConfig | null = $state(null);
-  let contextMenuPos = $state({ x: 0, y: 0 });
+  let unlisteners: UnlistenFn[] = [];
 
-  async function handleAddApp(name: string, url: string) {
-    await addNewApp($activeSpaceId, name, url);
-    showAddDialog = false;
+  onMount(async () => {
+    unlisteners.push(
+      await listen("dialog-result", async () => { await loadSpaces(); }),
+      await listen("space-switched", async () => { await loadSpaces(); }),
+      await listen<{ space_id: string; app_id: string }>(
+        "context-menu-remove-app",
+        async (event) => {
+          await removeExistingApp(event.payload.space_id, event.payload.app_id, false);
+        }
+      ),
+    );
+  });
+
+  onDestroy(() => {
+    unlisteners.forEach((fn) => fn());
+  });
+
+  async function handleOpenAddApp() {
+    await showDialog("add-app", $activeSpaceId);
   }
 
   async function handleSelectApp(app: AppConfig) {
     await openExistingApp($activeSpaceId, app.id);
   }
 
-  function handleContextMenu(app: AppConfig, event: MouseEvent) {
-    contextMenuApp = app;
-    contextMenuPos = { x: event.clientX, y: event.clientY };
-  }
-
-  async function handleRemoveApp() {
-    if (contextMenuApp) {
-      await removeExistingApp($activeSpaceId, contextMenuApp.id, false);
-      contextMenuApp = null;
-    }
-  }
-
-  function closeContextMenu() {
-    contextMenuApp = null;
+  async function handleContextMenu(app: AppConfig, _event: MouseEvent) {
+    await showAppContextMenu($activeSpaceId, app.id);
   }
 
   async function handleDrop(event: DragEvent) {
@@ -57,11 +60,7 @@
   }
 </script>
 
-<svelte:window onclick={closeContextMenu} />
-
 <div class="sidebar">
-  <SpaceSwitcher />
-
   <div
     class="app-list"
     role="list"
@@ -80,29 +79,42 @@
   </div>
 
   <div class="sidebar-footer">
-    <button class="add-app-btn" onclick={() => (showAddDialog = true)}>
-      + Add App
-    </button>
+    <button class="add-app-btn" onclick={handleOpenAddApp} title="Add App">+</button>
   </div>
 </div>
 
-{#if showAddDialog}
-  <AddAppDialog onAdd={handleAddApp} onCancel={() => (showAddDialog = false)} />
-{/if}
-
-{#if contextMenuApp}
-  <div class="context-menu" style="left: {contextMenuPos.x}px; top: {contextMenuPos.y}px">
-    <button onclick={handleRemoveApp}>Remove App</button>
-  </div>
-{/if}
-
 <style>
-  .sidebar { display: flex; flex-direction: column; height: 100vh; width: 100%; background: var(--bg-primary, #1a1a1a); color: var(--text-primary, #ccc); overflow: hidden; }
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100%;
+    background: var(--bg-primary, #1a1a1a);
+    color: var(--text-primary, #ccc);
+    overflow: hidden;
+  }
   .app-list { flex: 1; overflow-y: auto; padding: 4px; }
-  .sidebar-footer { padding: 8px; border-top: 1px solid var(--border-color, #333); }
-  .add-app-btn { width: 100%; padding: 8px; background: transparent; color: var(--text-secondary, #888); border: 1px dashed var(--border-color, #444); border-radius: 6px; cursor: pointer; }
-  .add-app-btn:hover { background: var(--bg-hover, #333); color: var(--text-primary, #fff); }
-  .context-menu { position: fixed; background: var(--bg-primary, #1e1e1e); border: 1px solid var(--border-color, #444); border-radius: 6px; padding: 4px; z-index: 2000; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
-  .context-menu button { display: block; width: 100%; padding: 6px 12px; background: transparent; color: var(--text-primary, #ccc); border: none; border-radius: 4px; cursor: pointer; text-align: left; }
-  .context-menu button:hover { background: var(--bg-hover, #333); }
+  .sidebar-footer {
+    padding: 8px;
+    border-top: 1px solid var(--border-color, #333);
+    display: flex;
+    justify-content: center;
+  }
+  .add-app-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary, #888);
+    border: 2px dashed var(--border-color, #444);
+    cursor: pointer;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .add-app-btn:hover {
+    border-color: var(--accent, #4a9eff);
+    color: var(--accent, #4a9eff);
+  }
 </style>

@@ -45,12 +45,6 @@ pub fn save_global_config(config: &GlobalConfig) -> Result<(), ConfigError> {
     Ok(())
 }
 
-pub fn load_space(space_id: &str) -> Result<SpaceConfig, ConfigError> {
-    let path = config_dir()?.join("spaces").join(format!("{}.toml", space_id));
-    let content = fs::read_to_string(&path)?;
-    Ok(toml::from_str(&content)?)
-}
-
 pub fn save_space(space: &SpaceConfig) -> Result<(), ConfigError> {
     let path = config_dir()?.join("spaces").join(format!("{}.toml", space.space.id));
     let content = toml::to_string_pretty(space)?;

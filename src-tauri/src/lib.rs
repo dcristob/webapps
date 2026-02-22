@@ -7,6 +7,9 @@ use config::storage;
 use state::AppState;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use tauri::{Emitter, LogicalPosition, LogicalSize, Manager};
+
+const TOPBAR_HEIGHT: f64 = 48.0;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -28,6 +31,7 @@ pub fn run() {
     }
 
     let global_config = storage::load_global_config().unwrap_or_default();
+    let sidebar_width = global_config.general.sidebar_width;
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -37,6 +41,94 @@ pub fn run() {
             active_space_id: Mutex::new("general".to_string()),
             active_app_id: Mutex::new(None),
             webview_labels: Mutex::new(HashMap::new()),
+            context_menu_target: Mutex::new(None),
+        })
+        .setup(move |app| {
+            // Create a bare window (no default webview)
+            let window = tauri::window::WindowBuilder::new(app, "main")
+                .title("WebApps")
+                .inner_size(1200.0, 800.0)
+                .min_inner_size(800.0, 600.0)
+                .build()?;
+
+            let size = window.inner_size()?;
+            let scale = window.scale_factor()?;
+            let logical_width = size.width as f64 / scale;
+            let logical_height = size.height as f64 / scale;
+
+            // --- Add topbar webview (full width, fixed height) ---
+            let topbar_url = tauri::WebviewUrl::App("index.html?mode=topbar".into());
+            let topbar_builder = tauri::WebviewBuilder::new("topbar", topbar_url);
+            window.add_child(
+                topbar_builder,
+                LogicalPosition::new(0.0, 0.0),
+                LogicalSize::new(logical_width, TOPBAR_HEIGHT),
+            )?;
+
+            // On Linux: configure GTK layout for topbar + inner hbox
+            #[cfg(target_os = "linux")]
+            {
+                use gtk::prelude::*;
+                let vbox = window.default_vbox()?;
+                // vbox is vertical by default — keep it that way
+
+                // Topbar: non-expanding, fixed height
+                let children = vbox.children();
+                if let Some(topbar_widget) = children.last() {
+                    vbox.set_child_packing(topbar_widget, false, false, 0, gtk::PackType::Start);
+                    topbar_widget.set_size_request(-1, TOPBAR_HEIGHT as i32);
+                }
+
+                // Create inner horizontal box for sidebar + app webviews
+                let inner_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                vbox.pack_start(&inner_hbox, true, true, 0);
+                inner_hbox.show();
+            }
+
+            // --- Add sidebar webview ---
+            let sidebar_url = tauri::WebviewUrl::App("index.html".into());
+            let sidebar_builder = tauri::WebviewBuilder::new("sidebar", sidebar_url);
+            window.add_child(
+                sidebar_builder,
+                LogicalPosition::new(0.0, TOPBAR_HEIGHT),
+                LogicalSize::new(sidebar_width as f64, logical_height - TOPBAR_HEIGHT),
+            )?;
+
+            // On Linux: reparent sidebar from vbox into the inner hbox
+            #[cfg(target_os = "linux")]
+            {
+                use gtk::prelude::*;
+                let vbox = window.default_vbox()?;
+                let children = vbox.children();
+                // children: [topbar, inner_hbox, sidebar]
+                let sidebar_widget = children.last().cloned();
+                let inner_hbox_widget = children.get(1).cloned();
+
+                if let (Some(sidebar_w), Some(inner_w)) = (sidebar_widget, inner_hbox_widget) {
+                    if let Some(inner_hbox) = inner_w.downcast_ref::<gtk::Box>() {
+                        vbox.remove(&sidebar_w);
+                        inner_hbox.pack_start(&sidebar_w, false, false, 0);
+                        sidebar_w.set_size_request(sidebar_width as i32, -1);
+                    }
+                }
+            }
+
+            Ok(())
+        })
+        .on_menu_event(|app_handle, event| {
+            if event.id().as_ref() == "ctx-remove-app" {
+                let state = app_handle.state::<AppState>();
+                let target = {
+                    let mut guard = state.context_menu_target.lock().unwrap();
+                    guard.take()
+                };
+                if let Some((space_id, app_id)) = target {
+                    let _ = app_handle.emit("context-menu-remove-app", serde_json::json!({
+                        "space_id": space_id,
+                        "app_id": app_id,
+                    }));
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::spaces::list_spaces,
@@ -56,7 +148,12 @@ pub fn run() {
             commands::webviews::close_app,
             commands::webviews::hide_all_app_webviews,
             commands::webviews::get_active_app,
+            commands::webviews::show_app_context_menu,
+            commands::webviews::webview_go_back,
+            commands::webviews::webview_reload,
             commands::favicon::fetch_site_info,
+            commands::dialog::show_dialog,
+            commands::dialog::close_dialog,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

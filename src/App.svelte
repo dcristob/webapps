@@ -1,18 +1,39 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Sidebar from "./lib/components/Sidebar.svelte";
+  import TopBar from "./lib/components/TopBar.svelte";
+  import AddAppDialog from "./lib/components/AddAppDialog.svelte";
+  import CreateSpaceDialog from "./lib/components/CreateSpaceDialog.svelte";
   import { loadSpaces } from "./lib/stores/spaces";
   import { initTitleListener } from "./lib/stores/apps";
 
+  const params = new URLSearchParams(window.location.search);
+  const mode = params.get("mode");
+  const dialogMode = params.get("dialog");
+  const dialogSpaceId = params.get("spaceId") ?? "";
+
   onMount(async () => {
-    await loadSpaces();
-    await initTitleListener();
+    // Sidebar mode: load spaces and init title listener
+    if (!dialogMode && !mode) {
+      await loadSpaces();
+      await initTitleListener();
+    }
+    // Topbar mode: handled by TopBar component itself
+    // Dialog mode: no init needed
   });
 </script>
 
-<main>
-  <Sidebar />
-</main>
+{#if dialogMode === "add-app"}
+  <AddAppDialog spaceId={dialogSpaceId} />
+{:else if dialogMode === "create-space"}
+  <CreateSpaceDialog />
+{:else if mode === "topbar"}
+  <TopBar />
+{:else}
+  <main>
+    <Sidebar />
+  </main>
+{/if}
 
 <style>
   :root {

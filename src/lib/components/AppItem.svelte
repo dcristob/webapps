@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { convertFileSrc } from "@tauri-apps/api/core";
   import type { AppConfig } from "../types";
   import { activeAppId, notificationBadges } from "../stores/apps";
 
@@ -11,6 +12,12 @@
   let isActive = $derived($activeAppId === app.id);
   let badge = $derived($notificationBadges[app.id] ?? 0);
   let isDragging = $state(false);
+
+  let iconSrc = $derived(
+    app.icon && app.icon !== "auto"
+      ? (app.icon.startsWith("/") ? convertFileSrc(app.icon) : app.icon)
+      : null
+  );
 </script>
 
 <button
@@ -27,11 +34,11 @@
   ondragend={() => {
     isDragging = false;
   }}
-  title={app.url}
+  title={app.name}
 >
   <div class="app-icon">
-    {#if app.icon && app.icon !== "auto"}
-      <img src={app.icon} alt="" width="24" height="24" />
+    {#if iconSrc}
+      <img src={iconSrc} alt="" width="32" height="32" />
     {:else}
       <span class="icon-placeholder">{app.name.charAt(0).toUpperCase()}</span>
     {/if}
@@ -39,52 +46,50 @@
       <span class="badge">{badge > 99 ? "99+" : badge}</span>
     {/if}
   </div>
-  <span class="app-name">{app.name}</span>
 </button>
 
 <style>
   .app-item {
     display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: center;
     width: 100%;
-    padding: 8px;
+    padding: 6px 0;
     background: transparent;
     color: var(--text-primary, #ccc);
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
-    text-align: left;
   }
   .app-item:hover { background: var(--bg-hover, #333); }
-  .app-item.active { background: var(--bg-active, #444); color: var(--text-primary, #fff); }
+  .app-item.active { background: var(--bg-active, #444); }
   .app-item.dragging { opacity: 0.4; }
   .app-icon {
     position: relative;
-    width: 28px;
-    height: 28px;
+    width: 40px;
+    height: 40px;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
   }
-  .app-icon img { width: 24px; height: 24px; border-radius: 4px; }
+  .app-icon img { width: 32px; height: 32px; border-radius: 6px; }
   .icon-placeholder {
-    width: 28px;
-    height: 28px;
+    width: 40px;
+    height: 40px;
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--accent, #4a9eff);
     color: #fff;
-    border-radius: 6px;
-    font-size: 14px;
+    border-radius: 8px;
+    font-size: 16px;
     font-weight: 600;
   }
   .badge {
     position: absolute;
-    top: -4px;
-    right: -4px;
+    top: -2px;
+    right: -2px;
     background: #e74c3c;
     color: #fff;
     font-size: 10px;
@@ -96,5 +101,4 @@
     justify-content: center;
     padding: 0 3px;
   }
-  .app-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

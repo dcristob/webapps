@@ -15,7 +15,7 @@ impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
             general: GeneralSettings {
-                sidebar_width: 250,
+                sidebar_width: 100,
                 theme: "dark".to_string(),
             },
         }

@@ -1,13 +1,12 @@
 <script lang="ts">
-  import { fetchSiteInfo } from "../api";
+  import { emit } from "@tauri-apps/api/event";
+  import { fetchSiteInfo, addApp, closeDialog } from "../api";
 
-  let { onAdd, onCancel }: {
-    onAdd: (name: string, url: string) => void;
-    onCancel: () => void;
-  } = $props();
+  let { spaceId }: { spaceId: string } = $props();
 
   let url = $state("");
   let name = $state("");
+  let iconPath = $state<string | undefined>(undefined);
   let loading = $state(false);
   let fetched = $state(false);
 
@@ -20,8 +19,9 @@
     }
     loading = true;
     try {
-      const [title, _iconPath] = await fetchSiteInfo(normalizedUrl);
+      const [title, fetchedIcon] = await fetchSiteInfo(normalizedUrl);
       name = title;
+      iconPath = fetchedIcon !== "auto" ? fetchedIcon : undefined;
       fetched = true;
     } catch (e) {
       try {
@@ -35,48 +35,78 @@
     loading = false;
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (url.trim() && name.trim()) {
-      onAdd(name.trim(), url.trim());
+      await addApp(spaceId, name.trim(), url.trim(), iconPath);
+      await emit("dialog-result", { type: "app-added" });
+      await closeDialog();
     }
+  }
+
+  async function handleCancel() {
+    await closeDialog();
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") handleCancel();
   }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="dialog-overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-  <div class="dialog">
-    <h3>Add App</h3>
-    <label>
-      URL
-      <div class="url-row">
-        <input bind:value={url} placeholder="https://example.com" onkeydown={(e) => e.key === "Enter" && handleFetchInfo()} />
-        <button onclick={handleFetchInfo} disabled={loading}>{loading ? "..." : "Fetch"}</button>
-      </div>
-    </label>
-    {#if fetched}
-      <label>
-        Name
-        <input bind:value={name} placeholder="App name" />
-      </label>
-    {/if}
-    <div class="actions">
-      <button class="cancel" onclick={onCancel}>Cancel</button>
-      <button class="add" onclick={handleSubmit} disabled={!fetched || !name.trim()}>Add</button>
+<svelte:window onkeydown={handleKeydown} />
+
+<div class="dialog">
+  <h3>Add App</h3>
+  <label>
+    URL
+    <div class="url-row">
+      <input bind:value={url} placeholder="https://example.com" onkeydown={(e) => e.key === "Enter" && handleFetchInfo()} autofocus />
+      <button onclick={handleFetchInfo} disabled={loading}>{loading ? "..." : "Fetch"}</button>
     </div>
+  </label>
+  {#if fetched}
+    <label>
+      Name
+      <input bind:value={name} placeholder="App name" onkeydown={(e) => e.key === "Enter" && handleSubmit()} />
+    </label>
+  {/if}
+  <div class="actions">
+    <button class="cancel" onclick={handleCancel}>Cancel</button>
+    <button class="add" onclick={handleSubmit} disabled={!fetched || !name.trim()}>Add</button>
   </div>
 </div>
 
 <style>
-  .dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-  .dialog { background: var(--bg-primary, #1e1e1e); border: 1px solid var(--border-color, #444); border-radius: 8px; padding: 20px; width: 400px; max-width: 90%; }
-  h3 { margin: 0 0 16px; color: var(--text-primary, #fff); }
+  .dialog {
+    padding: 24px;
+    height: 100vh;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-primary, #1a1a1a);
+    border: 1px solid var(--border-color, #444);
+    border-radius: 8px;
+  }
+  h3 { margin: 0 0 16px; color: var(--text-primary, #fff); font-size: 16px; }
   label { display: block; margin-bottom: 12px; color: var(--text-secondary, #aaa); font-size: 13px; }
-  input { display: block; width: 100%; margin-top: 4px; padding: 8px; background: var(--bg-secondary, #2a2a2a); color: var(--text-primary, #fff); border: 1px solid var(--border-color, #444); border-radius: 4px; box-sizing: border-box; }
+  input {
+    display: block; width: 100%; margin-top: 4px; padding: 8px;
+    background: var(--bg-secondary, #2a2a2a); color: var(--text-primary, #fff);
+    border: 1px solid var(--border-color, #444); border-radius: 4px; box-sizing: border-box;
+  }
   .url-row { display: flex; gap: 6px; }
   .url-row input { flex: 1; }
-  .url-row button { padding: 8px 12px; background: var(--accent, #4a9eff); color: #fff; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-  .cancel { padding: 8px 16px; background: transparent; color: var(--text-secondary, #aaa); border: 1px solid var(--border-color, #444); border-radius: 4px; cursor: pointer; }
-  .add { padding: 8px 16px; background: var(--accent, #4a9eff); color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+  .url-row button {
+    padding: 8px 12px; background: var(--accent, #4a9eff); color: #fff;
+    border: none; border-radius: 4px; cursor: pointer; white-space: nowrap;
+  }
+  .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; padding-top: 16px; }
+  .cancel {
+    padding: 8px 16px; background: transparent; color: var(--text-secondary, #aaa);
+    border: 1px solid var(--border-color, #444); border-radius: 4px; cursor: pointer;
+  }
+  .add {
+    padding: 8px 16px; background: var(--accent, #4a9eff); color: #fff;
+    border: none; border-radius: 4px; cursor: pointer;
+  }
   .add:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
