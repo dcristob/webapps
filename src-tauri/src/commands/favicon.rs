@@ -82,16 +82,34 @@ async fn download_favicon(favicon_url: &str, title: &str) -> Result<String, Stri
     if !response.status().is_success() {
         return Err("Failed to download favicon".to_string());
     }
+    
+    // Check Content-Type to ensure it's an image
+    let content_type = response.headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    
+    if !content_type.starts_with("image/") {
+        return Err("Downloaded content is not an image".to_string());
+    }
+    
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    
+    // Validate that we actually got image data by checking magic bytes
+    if bytes.len() < 4 {
+        return Err("Downloaded file too small to be a valid image".to_string());
+    }
+    
+    // Detect actual file type from magic bytes
+    let detected_ext = detect_image_format(&bytes);
+    if detected_ext.is_none() {
+        return Err("Downloaded file is not a valid image format".to_string());
+    }
+    
     let icons_dir = storage::config_dir().map_err(|e| e.to_string())?.join("icons");
     fs::create_dir_all(&icons_dir).map_err(|e| e.to_string())?;
-    let ext = if favicon_url.contains(".png") {
-        "png"
-    } else if favicon_url.contains(".svg") {
-        "svg"
-    } else {
-        "ico"
-    };
+    
+    let ext = detected_ext.unwrap();
     let safe_name: String = title
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
@@ -100,4 +118,44 @@ async fn download_favicon(favicon_url: &str, title: &str) -> Result<String, Stri
     let path = icons_dir.join(&filename);
     fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())
+}
+
+fn detect_image_format(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() < 4 {
+        return None;
+    }
+    
+    // PNG: 89 50 4E 47
+    if bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 {
+        return Some("png");
+    }
+    
+    // JPEG: FF D8 FF
+    if bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
+        return Some("jpg");
+    }
+    
+    // GIF: 47 49 46 38
+    if bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x38 {
+        return Some("gif");
+    }
+    
+    // ICO: 00 00 01 00 (Windows icon)
+    if bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0x01 && bytes[3] == 0x00 {
+        return Some("ico");
+    }
+    
+    // SVG: starts with XML declaration or <svg
+    if bytes.starts_with(b"<?xml") || bytes.starts_with(b"<svg") {
+        return Some("svg");
+    }
+    
+    // WebP: 52 49 46 46 ... 57 45 42 50
+    if bytes.len() >= 12 && bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 {
+        if bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50 {
+            return Some("webp");
+        }
+    }
+    
+    None
 }

@@ -46,10 +46,12 @@ pub fn run() {
         })
         .setup(move |app| {
             // Create a bare window (no default webview)
+            let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
             let window = tauri::window::WindowBuilder::new(app, "main")
                 .title("WebApps")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(800.0, 600.0)
+                .icon(icon)?
                 .build()?;
 
             let size = window.inner_size()?;
