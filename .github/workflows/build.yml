@@ -1,4 +1,4 @@
-name: Build
+name: Build and Release
 
 on:
   push:
@@ -36,7 +36,7 @@ jobs:
           cargo test --release
 
   build-tauri:
-    name: Build Tauri
+    name: Build Tauri (${{ matrix.platform }})
     needs: build-rust
     strategy:
       fail-fast: false
@@ -110,3 +110,76 @@ jobs:
           path: |
             src-tauri/target/release/bundle/**/*.msi
             src-tauri/target/release/bundle/**/*.exe
+
+  create-release:
+    name: Create Release
+    needs: [build-rust, build-tauri]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get version from Cargo.toml
+        id: get_version
+        run: |
+          VERSION=$(grep '^version' src-tauri/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Generate timestamp
+        id: get_timestamp
+        run: |
+          TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: "*-artifacts"
+          merge-multiple: true
+
+      - name: List artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          find artifacts -type f -name "*" | sort
+
+      - name: Delete previous continuous release
+        uses: dev-drprasad/delete-tag-and-release@v1.1
+        with:
+          tag_name: continuous
+          delete_release: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: continuous
+          name: "Continuous Build"
+          body: |
+            This is a continuous build from the main branch.
+            
+            **Version:** ${{ steps.get_version.outputs.version }}
+            **Build Date:** ${{ steps.get_timestamp.outputs.timestamp }}
+            **Commit:** ${{ github.sha }}
+            
+            ## Installation
+            
+            - **Linux**: Download `.deb` for Debian/Ubuntu or `.AppImage` for universal Linux
+            - **macOS**: Download `.dmg` and drag to Applications
+            - **Windows**: Download `.msi` installer
+            
+            ## What's Included
+            
+            Latest changes from the main branch with all platform builds.
+            
+            > **Note:** This is a development build. For stable releases, check the [Releases](https://github.com/${{ github.repository }}/releases) page.
+          files: |
+            artifacts/**/*
+          prerelease: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
