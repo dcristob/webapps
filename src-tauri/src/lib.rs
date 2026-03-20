@@ -11,6 +11,33 @@ use tauri::{Emitter, LogicalPosition, LogicalSize, Manager};
 
 const TOPBAR_HEIGHT: f64 = 48.0;
 
+/// On COSMIC desktop, detect the dark/light mode preference and apply the
+/// matching GTK theme so window decorations respect the system appearance.
+#[cfg(target_os = "linux")]
+fn apply_cosmic_theme() {
+    use gtk::prelude::*;
+
+    if std::env::var("XDG_CURRENT_DESKTOP").as_deref() != Ok("COSMIC") {
+        return;
+    }
+
+    let is_dark = dirs::config_dir()
+        .map(|c| c.join("cosmic/com.system76.CosmicTheme.Mode/v1/is_dark"))
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim() == "true")
+        .unwrap_or(false);
+
+    if let Some(settings) = gtk::Settings::default() {
+        if is_dark {
+            settings.set_property("gtk-theme-name", "adw-gtk3-dark");
+            settings.set_property("gtk-application-prefer-dark-theme", true);
+        } else {
+            settings.set_property("gtk-theme-name", "adw-gtk3");
+            settings.set_property("gtk-application-prefer-dark-theme", false);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     storage::ensure_dirs().expect("Failed to create config directories");
@@ -45,6 +72,9 @@ pub fn run() {
             context_menu_target: Mutex::new(None),
         })
         .setup(move |app| {
+            #[cfg(target_os = "linux")]
+            apply_cosmic_theme();
+
             // Create a bare window (no default webview)
             let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
             let window = tauri::window::WindowBuilder::new(app, "main")
