@@ -76,6 +76,11 @@ export async function showAppContextMenu(spaceId: string, appId: string): Promis
   return invoke("show_app_context_menu", { spaceId, appId });
 }
 
+// Sleep
+export async function getSleptApps(): Promise<string[]> {
+  return invoke("get_slept_apps");
+}
+
 // Navigation
 export async function webviewGoBack(): Promise<void> {
   return invoke("webview_go_back");

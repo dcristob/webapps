@@ -1,7 +1,7 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
   import type { AppConfig } from "../types";
-  import { activeAppId, notificationBadges } from "../stores/apps";
+  import { activeAppId, notificationBadges, sleptApps } from "../stores/apps";
 
   let { app, onSelect, onContextMenu }: {
     app: AppConfig;
@@ -11,6 +11,7 @@
 
   let isActive = $derived($activeAppId === app.id);
   let badge = $derived($notificationBadges[app.id] ?? 0);
+  let isSlept = $derived($sleptApps.has(app.id));
   let isDragging = $state(false);
 
   let iconSrc = $derived(
@@ -23,6 +24,7 @@
 <button
   class="app-item"
   class:active={isActive}
+  class:slept={isSlept}
   class:dragging={isDragging}
   draggable="true"
   onclick={() => onSelect(app)}
@@ -34,7 +36,7 @@
   ondragend={() => {
     isDragging = false;
   }}
-  title={app.name}
+  title={isSlept ? `${app.name} (sleeping)` : app.name}
 >
   <div class="app-icon">
     {#if iconSrc}
@@ -63,6 +65,8 @@
   }
   .app-item:hover { background: var(--bg-hover, #333); }
   .app-item.active { background: var(--bg-active, #444); }
+  .app-item.slept { opacity: 0.45; }
+  .app-item.slept:hover { opacity: 0.7; }
   .app-item.dragging { opacity: 0.4; }
   .app-icon {
     position: relative;

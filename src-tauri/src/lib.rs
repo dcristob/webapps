@@ -7,6 +7,7 @@ use config::storage;
 use state::AppState;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, LogicalPosition, LogicalSize, Manager};
 
 const TOPBAR_HEIGHT: f64 = 48.0;
@@ -70,6 +71,8 @@ pub fn run() {
             active_app_id: Mutex::new(None),
             webview_labels: Mutex::new(HashMap::new()),
             context_menu_target: Mutex::new(None),
+            last_active: Mutex::new(HashMap::new()),
+            slept_apps: Mutex::new(std::collections::HashSet::new()),
         })
         .setup(move |app| {
             #[cfg(target_os = "linux")]
@@ -146,6 +149,52 @@ pub fn run() {
                 }
             }
 
+            // Background task: periodically sleep idle app webviews to free memory
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(Duration::from_secs(60));
+
+                    let state = app_handle.state::<AppState>();
+
+                    let timeout_mins = {
+                        let config = state.global_config.lock().unwrap();
+                        config.general.sleep_timeout_mins
+                    };
+                    if timeout_mins == 0 {
+                        continue;
+                    }
+                    let timeout = Duration::from_secs(timeout_mins as u64 * 60);
+
+                    let active_app = {
+                        state.active_app_id.lock().unwrap().clone()
+                    };
+
+                    let candidates: Vec<String> = {
+                        let last_active = state.last_active.lock().unwrap();
+                        let labels = state.webview_labels.lock().unwrap();
+                        let now = Instant::now();
+                        labels.keys()
+                            .filter(|app_id| {
+                                // Never sleep the currently active app
+                                if active_app.as_deref() == Some(app_id.as_str()) {
+                                    return false;
+                                }
+                                match last_active.get(*app_id) {
+                                    Some(t) => now.duration_since(*t) >= timeout,
+                                    None => false,
+                                }
+                            })
+                            .cloned()
+                            .collect()
+                    };
+
+                    for app_id in candidates {
+                        let _ = commands::webviews::sleep_app_inner(&app_handle, &app_id, &state);
+                    }
+                }
+            });
+
             Ok(())
         })
         .on_menu_event(|app_handle, event| {
@@ -202,6 +251,7 @@ pub fn run() {
             commands::webviews::show_app_context_menu,
             commands::webviews::webview_go_back,
             commands::webviews::webview_reload,
+            commands::webviews::get_slept_apps,
             commands::favicon::fetch_site_info,
             commands::dialog::show_dialog,
             commands::dialog::close_dialog,

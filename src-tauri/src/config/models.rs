@@ -9,6 +9,14 @@ pub struct GlobalConfig {
 pub struct GeneralSettings {
     pub sidebar_width: u32,
     pub theme: String,
+    /// Minutes of inactivity before a background app's webview is destroyed to save memory.
+    /// 0 = disabled.
+    #[serde(default = "default_sleep_timeout")]
+    pub sleep_timeout_mins: u32,
+}
+
+fn default_sleep_timeout() -> u32 {
+    15
 }
 
 impl Default for GlobalConfig {
@@ -17,6 +25,7 @@ impl Default for GlobalConfig {
             general: GeneralSettings {
                 sidebar_width: 100,
                 theme: "dark".to_string(),
+                sleep_timeout_mins: 15,
             },
         }
     }

@@ -1,10 +1,11 @@
-import { writable } from "svelte/store";
+import { writable, get } from "svelte/store";
 import { listen } from "@tauri-apps/api/event";
 import type { AppConfig } from "../types";
 import * as api from "../api";
 
 export const activeAppId = writable<string | null>(null);
 export const notificationBadges = writable<Record<string, number>>({});
+export const sleptApps = writable<Set<string>>(new Set());
 
 export async function addNewApp(spaceId: string, name: string, url: string, icon?: string) {
   const app = await api.addApp(spaceId, name, url, icon);
@@ -52,4 +53,18 @@ export async function initTitleListener() {
       updateBadge(event.payload.app_id, event.payload.badge);
     }
   );
+
+  await listen<string>("app-slept", (event) => {
+    sleptApps.update((s) => { s.add(event.payload); return new Set(s); });
+  });
+
+  await listen<string>("app-woke", (event) => {
+    sleptApps.update((s) => { s.delete(event.payload); return new Set(s); });
+  });
+
+  // Load initial slept state
+  const initial = await api.getSleptApps();
+  if (initial.length > 0) {
+    sleptApps.set(new Set(initial));
+  }
 }
