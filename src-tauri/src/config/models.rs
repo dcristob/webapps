@@ -13,6 +13,8 @@ pub struct GeneralSettings {
     /// 0 = disabled.
     #[serde(default = "default_sleep_timeout")]
     pub sleep_timeout_mins: u32,
+    #[serde(default)]
+    pub space_order: Vec<String>,
 }
 
 fn default_sleep_timeout() -> u32 {
@@ -26,6 +28,7 @@ impl Default for GlobalConfig {
                 sidebar_width: 100,
                 theme: "dark".to_string(),
                 sleep_timeout_mins: 15,
+                space_order: vec![],
             },
         }
     }
@@ -42,7 +45,13 @@ pub struct SpaceInfo {
     pub id: String,
     pub name: String,
     pub icon: String,
+    #[serde(default = "default_space_color")]
+    pub color: String,
     pub isolation: IsolationMode,
+}
+
+fn default_space_color() -> String {
+    "#4a9eff".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -45,3 +45,27 @@ export async function renameExistingSpace(spaceId: string, newName: string) {
     )
   );
 }
+
+export async function editExistingSpace(spaceId: string, updates: { name?: string; color?: string }) {
+  await api.editSpace(spaceId, updates);
+  spaces.update((s) =>
+    s.map((sp) =>
+      sp.space.id === spaceId
+        ? { ...sp, space: { ...sp.space, ...updates } }
+        : sp
+    )
+  );
+}
+
+export async function reorderExistingSpaces(spaceIds: string[]) {
+  await api.reorderSpaces(spaceIds);
+  spaces.update((s) => {
+    const sorted = [...s];
+    sorted.sort((a, b) => {
+      const ai = spaceIds.indexOf(a.space.id);
+      const bi = spaceIds.indexOf(b.space.id);
+      return (ai === -1 ? Infinity : ai) - (bi === -1 ? Infinity : bi);
+    });
+    return sorted;
+  });
+}

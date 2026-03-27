@@ -50,6 +50,7 @@ pub fn run() {
                 id: "general".to_string(),
                 name: "General".to_string(),
                 icon: "folder".to_string(),
+                color: "#4a9eff".to_string(),
                 isolation: IsolationMode::default(),
             },
             apps: vec![],
@@ -71,6 +72,7 @@ pub fn run() {
             active_app_id: Mutex::new(None),
             webview_labels: Mutex::new(HashMap::new()),
             context_menu_target: Mutex::new(None),
+            space_context_menu_target: Mutex::new(None),
             last_active: Mutex::new(HashMap::new()),
             slept_apps: Mutex::new(std::collections::HashSet::new()),
         })
@@ -199,12 +201,14 @@ pub fn run() {
         })
         .on_menu_event(|app_handle, event| {
             let state = app_handle.state::<AppState>();
-            let target = {
+
+            // Handle app context menu events
+            let app_target = {
                 let mut guard = state.context_menu_target.lock().unwrap();
                 guard.take()
             };
 
-            if let Some((space_id, app_id)) = target {
+            if let Some((space_id, app_id)) = app_target {
                 match event.id().as_ref() {
                     "ctx-remove-app" => {
                         let _ = app_handle.emit("context-menu-remove-app", serde_json::json!({
@@ -229,6 +233,33 @@ pub fn run() {
                     _ => {}
                 }
             }
+
+            // Handle space context menu events
+            let space_target = {
+                let mut guard = state.space_context_menu_target.lock().unwrap();
+                guard.take()
+            };
+
+            if let Some(space_id) = space_target {
+                match event.id().as_ref() {
+                    "ctx-edit-space" => {
+                        let spaces = state.spaces.lock().unwrap();
+                        if let Some(space) = spaces.iter().find(|s| s.space.id == space_id) {
+                            let _ = app_handle.emit("context-menu-edit-space", serde_json::json!({
+                                "space_id": space_id,
+                                "name": space.space.name,
+                                "color": space.space.color,
+                            }));
+                        }
+                    }
+                    "ctx-delete-space" => {
+                        let _ = app_handle.emit("context-menu-delete-space", serde_json::json!({
+                            "space_id": space_id,
+                        }));
+                    }
+                    _ => {}
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::spaces::list_spaces,
@@ -237,7 +268,10 @@ pub fn run() {
             commands::spaces::rename_space,
             commands::spaces::delete_space,
             commands::spaces::switch_space,
+            commands::spaces::edit_space,
+            commands::spaces::reorder_spaces,
             commands::spaces::set_space_isolation,
+            commands::spaces::show_space_context_menu,
             commands::apps::add_app,
             commands::apps::remove_app,
             commands::apps::edit_app,

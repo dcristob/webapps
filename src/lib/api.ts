@@ -10,12 +10,24 @@ export async function getActiveSpace(): Promise<string> {
   return invoke("get_active_space");
 }
 
-export async function createSpace(name: string): Promise<SpaceConfig> {
-  return invoke("create_space", { name });
+export async function createSpace(name: string, color?: string): Promise<SpaceConfig> {
+  return invoke("create_space", { name, color: color ?? null });
 }
 
 export async function renameSpace(spaceId: string, newName: string): Promise<void> {
   return invoke("rename_space", { spaceId, newName });
+}
+
+export async function editSpace(spaceId: string, updates: { name?: string; color?: string }): Promise<void> {
+  return invoke("edit_space", { spaceId, name: updates.name ?? null, color: updates.color ?? null });
+}
+
+export async function reorderSpaces(spaceIds: string[]): Promise<void> {
+  return invoke("reorder_spaces", { spaceIds });
+}
+
+export async function showSpaceContextMenu(spaceId: string, x: number, y: number): Promise<void> {
+  return invoke("show_space_context_menu", { spaceId, x, y });
 }
 
 export async function deleteSpace(spaceId: string): Promise<void> {
@@ -72,8 +84,8 @@ export async function getActiveApp(): Promise<string | null> {
   return invoke("get_active_app");
 }
 
-export async function showAppContextMenu(spaceId: string, appId: string): Promise<void> {
-  return invoke("show_app_context_menu", { spaceId, appId });
+export async function showAppContextMenu(spaceId: string, appId: string, x: number, y: number): Promise<void> {
+  return invoke("show_app_context_menu", { spaceId, appId, x, y });
 }
 
 // Sleep

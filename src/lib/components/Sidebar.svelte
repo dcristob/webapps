@@ -46,8 +46,9 @@
     await openExistingApp($activeSpaceId, app.id);
   }
 
-  async function handleContextMenu(app: AppConfig, _event: MouseEvent) {
-    await showAppContextMenu($activeSpaceId, app.id);
+  async function handleContextMenu(app: AppConfig, event: MouseEvent) {
+    // Sidebar is below the 48px topbar; offset y accordingly for main window coordinates
+    await showAppContextMenu($activeSpaceId, app.id, event.clientX, event.clientY + 48 + 70);
   }
 
   async function handleDrop(event: DragEvent) {

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const DIALOG_WIDTH: f64 = 450.0;
-const DIALOG_HEIGHT: f64 = 400.0;
+const DIALOG_HEIGHT: f64 = 410.0;
 
 #[tauri::command]
 pub fn show_dialog(app_handle: AppHandle, dialog_type: String, space_id: Option<String>, params: Option<HashMap<String, String>>) -> Result<(), String> {
@@ -25,6 +25,7 @@ pub fn show_dialog(app_handle: AppHandle, dialog_type: String, space_id: Option<
         "add-app" => "Add App",
         "edit-app" => "Edit App",
         "create-space" => "New Space",
+        "edit-space" => "Edit Space",
         _ => "Dialog",
     };
 

@@ -259,7 +259,7 @@ pub fn get_active_app(state: State<'_, AppState>) -> Result<Option<String>, Stri
 }
 
 #[tauri::command]
-pub fn show_app_context_menu(app_handle: AppHandle, space_id: String, app_id: String, state: State<'_, AppState>) -> Result<(), String> {
+pub fn show_app_context_menu(app_handle: AppHandle, space_id: String, app_id: String, x: f64, y: f64, state: State<'_, AppState>) -> Result<(), String> {
     // Store the target so the menu-event handler knows which app was right-clicked
     {
         let mut target = state.context_menu_target.lock().map_err(|e| e.to_string())?;
@@ -275,7 +275,7 @@ pub fn show_app_context_menu(app_handle: AppHandle, space_id: String, app_id: St
     let menu = Menu::with_items(&app_handle, &[&edit_item, &remove_item])
         .map_err(|e| e.to_string())?;
 
-    menu.popup(window).map_err(|e| e.to_string())?;
+    menu.popup_at(window, LogicalPosition::new(x, y)).map_err(|e| e.to_string())?;
 
     Ok(())
 }

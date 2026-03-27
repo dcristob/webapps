@@ -3,7 +3,7 @@
   import Sidebar from "./lib/components/Sidebar.svelte";
   import TopBar from "./lib/components/TopBar.svelte";
   import AppDialog from "./lib/components/AppDialog.svelte";
-  import CreateSpaceDialog from "./lib/components/CreateSpaceDialog.svelte";
+  import SpaceDialog from "./lib/components/SpaceDialog.svelte";
   import { loadSpaces } from "./lib/stores/spaces";
   import { initTitleListener } from "./lib/stores/apps";
 
@@ -15,6 +15,8 @@
   const dialogAppName = decodeURIComponent(params.get("name") ?? "");
   const dialogAppUrl = decodeURIComponent(params.get("url") ?? "");
   const dialogAppIcon = decodeURIComponent(params.get("icon") ?? "auto");
+  const dialogSpaceName = decodeURIComponent(params.get("spaceName") ?? "");
+  const dialogSpaceColor = decodeURIComponent(params.get("spaceColor") ?? "#4a9eff");
 
   onMount(async () => {
     // Sidebar mode: load spaces and init title listener
@@ -39,7 +41,14 @@
     initialIcon={dialogAppIcon}
   />
 {:else if dialogMode === "create-space"}
-  <CreateSpaceDialog />
+  <SpaceDialog mode="create" />
+{:else if dialogMode === "edit-space"}
+  <SpaceDialog
+    mode="edit"
+    spaceId={dialogSpaceId}
+    initialName={dialogSpaceName}
+    initialColor={dialogSpaceColor}
+  />
 {:else if mode === "topbar"}
   <TopBar />
 {:else}

@@ -10,8 +10,10 @@ pub struct AppState {
     pub active_space_id: Mutex<String>,
     pub active_app_id: Mutex<Option<String>>,
     pub webview_labels: Mutex<HashMap<String, String>>,
-    /// Tracks (space_id, app_id) for the most recent context-menu right-click.
+    /// Tracks (space_id, app_id) for the most recent app context-menu right-click.
     pub context_menu_target: Mutex<Option<(String, String)>>,
+    /// Tracks space_id for the most recent space context-menu right-click.
+    pub space_context_menu_target: Mutex<Option<String>>,
     /// Last time each app was actively viewed (app_id -> Instant).
     pub last_active: Mutex<HashMap<String, Instant>>,
     /// Apps whose webviews were destroyed to save memory but are still "open" in the sidebar.

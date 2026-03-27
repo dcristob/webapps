@@ -2,6 +2,7 @@ export interface SpaceInfo {
   id: string;
   name: string;
   icon: string;
+  color: string;
   isolation: "shared" | "per-app";
 }
 
