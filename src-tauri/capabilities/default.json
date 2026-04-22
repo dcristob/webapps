@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for sidebar, topbar, and dialog webviews",
-  "webviews": ["sidebar", "topbar", "dialog"],
+  "description": "Capability for sidebar, topbar, dialog, and app webviews",
+  "webviews": ["sidebar", "topbar", "dialog", "app-*"],
   "permissions": [
     "core:default",
     "core:event:default",
