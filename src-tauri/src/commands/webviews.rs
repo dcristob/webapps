@@ -115,14 +115,17 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
     let label_for_nav = label.clone();
     let app_handle_for_nav = app_handle.clone();
 
+    let base_url_host = url::Url::parse(&app_clone.url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_string()));
+
     let webview_builder = WebviewBuilder::new(&label, webview_url)
         .user_agent(USER_AGENT)
         .data_directory(data_dir)
         .on_navigation(|_url| true)
         .on_new_window(move |url, features| {
-            // Allow popups for OAuth/login flows — create a proper window
-            // that shares the parent's web context (cookies, ITP settings)
             let host = url.host_str().unwrap_or("");
+
             if host.ends_with("accounts.google.com")
                 || host.ends_with("appleid.apple.com")
                 || host.ends_with("login.microsoftonline.com")
@@ -145,7 +148,18 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
                 }
                 return NewWindowResponse::Allow;
             }
-            // For regular links, navigate in the same webview
+
+            let is_external = base_url_host
+                .as_ref()
+                .map(|base| host != base.as_str())
+                .unwrap_or(true);
+
+            if is_external {
+                use tauri_plugin_shell::ShellExt;
+                let _ = app_handle_for_nav.shell().open(url.to_string(), None);
+                return NewWindowResponse::Deny;
+            }
+
             if let Some(webview) = app_handle_for_nav.get_webview(&label_for_nav) {
                 let url_str = url.as_str().replace('\\', "\\\\").replace('\'', "\\'");
                 let _ = webview.eval(&format!("window.location.href = '{}'", url_str));
