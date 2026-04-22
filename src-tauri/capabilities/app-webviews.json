@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "app-webviews",
+  "description": "Capability for app webviews — restricted to core IPC only",
+  "webviews": ["app-*"],
+  "permissions": [
+    "core:default",
+    "core:event:default"
+  ]
+}

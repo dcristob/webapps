@@ -126,10 +126,11 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
         .on_new_window(move |url, features| {
             let host = url.host_str().unwrap_or("");
 
-            if host.ends_with("accounts.google.com")
-                || host.ends_with("appleid.apple.com")
-                || host.ends_with("login.microsoftonline.com")
-                || host.ends_with("github.com")
+            if host == "accounts.google.com"
+                || host == "appleid.apple.com"
+                || host == "login.microsoftonline.com"
+                || host == "github.com"
+                || host.ends_with(".github.com")
             {
                 let popup_id = POPUP_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let popup_label = format!("popup-{}", popup_id);
