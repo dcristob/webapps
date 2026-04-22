@@ -320,6 +320,12 @@ pub fn get_slept_apps(state: State<'_, AppState>) -> Result<Vec<String>, String>
     Ok(slept.iter().cloned().collect())
 }
 
+#[tauri::command]
+pub fn open_in_browser(app_handle: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt;
+    app_handle.shell().open(url, None).map_err(|e| e.to_string())
+}
+
 fn parse_badge_count(title: &str) -> u32 {
     if let Some(start) = title.find('(') {
         if let Some(end) = title[start..].find(')') {

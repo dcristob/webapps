@@ -286,6 +286,7 @@ pub fn run() {
             commands::webviews::webview_go_back,
             commands::webviews::webview_reload,
             commands::webviews::get_slept_apps,
+            commands::webviews::open_in_browser,
             commands::favicon::fetch_site_info,
             commands::dialog::show_dialog,
             commands::dialog::close_dialog,
