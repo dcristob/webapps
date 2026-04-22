@@ -15,6 +15,34 @@ use crate::state::AppState;
 const TOPBAR_HEIGHT: f64 = 48.0;
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
+const LINK_INTERCEPTOR_JS: &str = r#"
+(function() {
+  var baseHostname = window.location.hostname;
+
+  document.addEventListener('click', function(e) {
+    var el = e.target;
+    while (el && el.tagName !== 'A') {
+      el = el.parentElement;
+    }
+    if (!el) return;
+
+    var href = el.href;
+    if (!href) return;
+
+    var protocol = el.protocol;
+    if (protocol !== 'http:' && protocol !== 'https:') return;
+
+    if (el.hostname !== baseHostname) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (window.__TAURI_INTERNALS__) {
+        window.__TAURI_INTERNALS__.invoke('open_in_browser', { url: href });
+      }
+    }
+  }, true);
+})();
+"#;
+
 fn resolve_data_directory(space: &SpaceConfig, app: &AppConfig) -> Result<std::path::PathBuf, String> {
     let use_per_app = space.space.isolation == IsolationMode::PerApp || app.isolation_override;
     if use_per_app {
@@ -134,6 +162,13 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
                     "badge": count
                 }),
             );
+        });
+
+    let webview_builder = webview_builder
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                let _ = webview.eval(LINK_INTERCEPTOR_JS);
+            }
         });
 
     window.add_child(
