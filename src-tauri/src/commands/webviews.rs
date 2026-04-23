@@ -156,8 +156,7 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
                 .unwrap_or(true);
 
             if is_external {
-                use tauri_plugin_shell::ShellExt;
-                let _ = app_handle_for_nav.shell().open(url.to_string(), None);
+                let _ = open::that(url.as_str());
                 return NewWindowResponse::Deny;
             }
 
@@ -371,9 +370,8 @@ pub fn get_slept_apps(state: State<'_, AppState>) -> Result<Vec<String>, String>
 }
 
 #[tauri::command]
-pub fn open_in_browser(app_handle: AppHandle, url: String) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt;
-    app_handle.shell().open(url, None).map_err(|e| e.to_string())
+pub fn open_in_browser(url: String) -> Result<(), String> {
+    open::that(&url).map_err(|e| e.to_string())
 }
 
 fn parse_badge_count(title: &str) -> u32 {
