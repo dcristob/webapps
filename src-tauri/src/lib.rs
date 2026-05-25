@@ -293,6 +293,8 @@ pub fn run() {
             commands::favicon::fetch_site_info,
             commands::dialog::show_dialog,
             commands::dialog::close_dialog,
+            commands::permissions::set_app_permission,
+            commands::permissions::get_app_permissions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
