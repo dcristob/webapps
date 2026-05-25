@@ -428,6 +428,7 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
 
     let mut active_app = state.active_app_id.lock().map_err(|e| e.to_string())?;
     *active_app = Some(app_clone.id.clone());
+    let _ = app_handle.emit("active-app-changed", Some(app_clone.id.clone()));
 
     let mut last_active = state.last_active.lock().map_err(|e| e.to_string())?;
     last_active.insert(app_clone.id.clone(), Instant::now());
@@ -457,6 +458,7 @@ pub fn switch_to_app(app_handle: AppHandle, _space_id: String, app_id: String, s
 
     let mut active_app = state.active_app_id.lock().map_err(|e| e.to_string())?;
     *active_app = Some(app_id.clone());
+    let _ = app_handle.emit("active-app-changed", Some(app_id.clone()));
 
     let mut last_active = state.last_active.lock().map_err(|e| e.to_string())?;
     last_active.insert(app_id, Instant::now());
@@ -475,6 +477,7 @@ pub fn close_app(app_handle: AppHandle, app_id: String, state: State<'_, AppStat
     let mut active_app = state.active_app_id.lock().map_err(|e| e.to_string())?;
     if active_app.as_deref() == Some(&app_id) {
         *active_app = None;
+        let _ = app_handle.emit("active-app-changed", None::<String>);
     }
     // Clean up sleep tracking
     let mut last_active = state.last_active.lock().map_err(|e| e.to_string())?;
@@ -495,6 +498,7 @@ pub fn hide_all_app_webviews(app_handle: AppHandle, state: State<'_, AppState>) 
     }
     let mut active_app = state.active_app_id.lock().map_err(|e| e.to_string())?;
     *active_app = None;
+    let _ = app_handle.emit("active-app-changed", None::<String>);
     Ok(())
 }
 

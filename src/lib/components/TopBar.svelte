@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import SpaceSwitcher from "./SpaceSwitcher.svelte";
+  import PermissionIcons from "./PermissionIcons.svelte";
   import { loadSpaces } from "../stores/spaces";
   import { webviewGoBack, webviewReload } from "../api";
 
@@ -32,6 +33,7 @@
         <path d="M13.65 2.35A7.96 7.96 0 0 0 8 0a8 8 0 1 0 8 8h-2a6 6 0 1 1-1.76-4.24L9 7h7V0l-2.35 2.35z"/>
       </svg>
     </button>
+    <PermissionIcons />
   </div>
 </div>
 
