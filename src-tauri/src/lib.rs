@@ -75,6 +75,9 @@ pub fn run() {
             space_context_menu_target: Mutex::new(None),
             last_active: Mutex::new(HashMap::new()),
             slept_apps: Mutex::new(std::collections::HashSet::new()),
+            #[cfg(target_os = "linux")]
+            pending_media_requests: Mutex::new(HashMap::new()),
+            active_captures: Mutex::new(HashMap::new()),
         })
         .setup(move |app| {
             #[cfg(target_os = "linux")]
