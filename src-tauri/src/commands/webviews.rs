@@ -161,6 +161,37 @@ fn update_capture_state(app_handle: &AppHandle, app_id: &str, kind: &str, active
     );
 }
 
+fn cleanup_media_state(app_handle: &AppHandle, app_id: &str, state: &AppState) {
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::PermissionRequestExt;
+        if let Ok(mut pending) = state.pending_media_requests.lock() {
+            if let Some(p) = pending.remove(app_id) {
+                p.request.deny();
+            }
+        }
+    }
+    if let Ok(mut captures) = state.active_captures.lock() {
+        captures.remove(app_id);
+    }
+    let _ = app_handle.emit(
+        "media-capture-changed",
+        serde_json::json!({
+            "app_id": app_id,
+            "kind": "camera",
+            "active": false,
+        }),
+    );
+    let _ = app_handle.emit(
+        "media-capture-changed",
+        serde_json::json!({
+            "app_id": app_id,
+            "kind": "microphone",
+            "active": false,
+        }),
+    );
+}
+
 fn resolve_data_directory(space: &SpaceConfig, app: &AppConfig) -> Result<std::path::PathBuf, String> {
     let use_per_app = space.space.isolation == IsolationMode::PerApp || app.isolation_override;
     if use_per_app {
@@ -450,6 +481,7 @@ pub fn close_app(app_handle: AppHandle, app_id: String, state: State<'_, AppStat
     last_active.remove(&app_id);
     let mut slept = state.slept_apps.lock().map_err(|e| e.to_string())?;
     slept.remove(&app_id);
+    cleanup_media_state(&app_handle, &app_id, &state);
     Ok(())
 }
 
@@ -525,6 +557,7 @@ pub fn sleep_app_inner(app_handle: &AppHandle, app_id: &str, state: &AppState) -
     let mut slept = state.slept_apps.lock().map_err(|e| e.to_string())?;
     slept.insert(app_id.to_string());
     let _ = app_handle.emit("app-slept", app_id);
+    cleanup_media_state(app_handle, app_id, state);
     Ok(())
 }
 
