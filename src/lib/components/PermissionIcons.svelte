@@ -63,6 +63,9 @@
       await webviewReload();
     } else if (state === "allow") {
       await setAppPermission(app.spaceId, app.app.id, kind, "block");
+      if (captures.camera || captures.microphone) {
+        await webviewReload();
+      }
     }
   }
 </script>
