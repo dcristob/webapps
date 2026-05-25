@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { SpaceConfig, AppConfig } from "./types";
+import type { SpaceConfig, AppConfig, AppPermissions, MediaKind, PermissionState } from "./types";
 
 // Space commands
 export async function listSpaces(): Promise<SpaceConfig[]> {
@@ -114,4 +114,40 @@ export async function showDialog(dialogType: string, spaceId?: string, params?: 
 
 export async function closeDialog(): Promise<void> {
   return invoke("close_dialog");
+}
+
+// Media permissions
+export async function setAppPermission(
+  spaceId: string,
+  appId: string,
+  kind: MediaKind,
+  stateValue: PermissionState,
+): Promise<AppPermissions> {
+  return invoke("set_app_permission", {
+    spaceId,
+    appId,
+    kind,
+    stateValue,
+  });
+}
+
+export async function getAppPermissions(
+  spaceId: string,
+  appId: string,
+): Promise<AppPermissions> {
+  return invoke("get_app_permissions", { spaceId, appId });
+}
+
+export async function respondMediaPermission(
+  spaceId: string,
+  appId: string,
+  camera: PermissionState | null,
+  microphone: PermissionState | null,
+): Promise<AppPermissions> {
+  return invoke("respond_media_permission", {
+    spaceId,
+    appId,
+    camera,
+    microphone,
+  });
 }
