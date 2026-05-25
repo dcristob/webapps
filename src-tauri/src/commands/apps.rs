@@ -13,6 +13,7 @@ pub fn add_app(space_id: String, name: String, url: String, icon: Option<String>
         url,
         icon: icon.unwrap_or_else(|| "auto".to_string()),
         isolation_override: false,
+        permissions: AppPermissions::default(),
     };
     let mut spaces = state.spaces.lock().map_err(|e| e.to_string())?;
     let space = spaces.iter_mut().find(|s| s.space.id == space_id)

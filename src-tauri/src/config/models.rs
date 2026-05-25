@@ -67,6 +67,30 @@ impl Default for IsolationMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PermissionState {
+    #[default]
+    Ask,
+    Allow,
+    Block,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaKind {
+    Camera,
+    Microphone,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppPermissions {
+    #[serde(default)]
+    pub camera: PermissionState,
+    #[serde(default)]
+    pub microphone: PermissionState,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub id: String,
@@ -74,4 +98,44 @@ pub struct AppConfig {
     pub url: String,
     pub icon: String,
     pub isolation_override: bool,
+    #[serde(default)]
+    pub permissions: AppPermissions,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_config_defaults_permissions_to_ask() {
+        let toml = r#"
+id = "abc"
+name = "Test"
+url = "https://example.com"
+icon = "auto"
+isolation_override = false
+"#;
+        let app: AppConfig = toml::from_str(toml).expect("parse");
+        assert_eq!(app.permissions.camera, PermissionState::Ask);
+        assert_eq!(app.permissions.microphone, PermissionState::Ask);
+    }
+
+    #[test]
+    fn app_config_roundtrip_with_permissions() {
+        let app = AppConfig {
+            id: "abc".to_string(),
+            name: "Test".to_string(),
+            url: "https://example.com".to_string(),
+            icon: "auto".to_string(),
+            isolation_override: false,
+            permissions: AppPermissions {
+                camera: PermissionState::Allow,
+                microphone: PermissionState::Block,
+            },
+        };
+        let s = toml::to_string(&app).expect("serialize");
+        let back: AppConfig = toml::from_str(&s).expect("deserialize");
+        assert_eq!(back.permissions.camera, PermissionState::Allow);
+        assert_eq!(back.permissions.microphone, PermissionState::Block);
+    }
 }
