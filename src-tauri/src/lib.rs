@@ -295,6 +295,7 @@ pub fn run() {
             commands::dialog::close_dialog,
             commands::permissions::set_app_permission,
             commands::permissions::get_app_permissions,
+            commands::permissions::respond_media_permission,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
