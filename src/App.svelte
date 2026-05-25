@@ -80,6 +80,7 @@
   let unlistenReq: UnlistenFn | null = null;
   let unlistenCap: UnlistenFn | null = null;
   let unlistenChanged: UnlistenFn | null = null;
+  let unlistenCancelled: UnlistenFn | null = null;
 
   onMount(async () => {
     // Sidebar mode: load spaces and init title listener
@@ -116,6 +117,10 @@
           await loadSpaces();
         },
       );
+
+      unlistenCancelled = await listen<string>("media-permission-cancelled", () => {
+        pendingRequest.set(null);
+      });
     }
     // Topbar mode: handled by TopBar component itself
     // Dialog mode: no init needed
@@ -125,6 +130,7 @@
     unlistenReq?.();
     unlistenCap?.();
     unlistenChanged?.();
+    unlistenCancelled?.();
   });
 </script>
 

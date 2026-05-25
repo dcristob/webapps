@@ -165,10 +165,18 @@ fn cleanup_media_state(app_handle: &AppHandle, app_id: &str, state: &AppState) {
     #[cfg(target_os = "linux")]
     {
         use webkit2gtk::PermissionRequestExt;
-        if let Ok(mut pending) = state.pending_media_requests.lock() {
+        let had_pending = if let Ok(mut pending) = state.pending_media_requests.lock() {
             if let Some(p) = pending.remove(app_id) {
                 p.request.deny();
+                true
+            } else {
+                false
             }
+        } else {
+            false
+        };
+        if had_pending {
+            let _ = app_handle.emit("media-permission-cancelled", app_id);
         }
     }
     if let Ok(mut captures) = state.active_captures.lock() {
