@@ -43,6 +43,103 @@ const LINK_INTERCEPTOR_JS: &str = r#"
 })();
 "#;
 
+#[cfg(target_os = "linux")]
+fn handle_media_permission_request(
+    app_handle: &AppHandle,
+    space_id: &str,
+    app_id: &str,
+    request: webkit2gtk::UserMediaPermissionRequest,
+) {
+    use webkit2gtk::{PermissionRequestExt, UserMediaPermissionRequestExt};
+
+    let wants_video = request.is_for_video_device();
+    let wants_audio = request.is_for_audio_device();
+    if !wants_video && !wants_audio {
+        // Not a request for video/audio capture (e.g. display capture). Deny by default.
+        request.deny();
+        return;
+    }
+
+    // Look up stored permissions for this app.
+    let state = app_handle.state::<crate::state::AppState>();
+    let (camera_state, microphone_state) = {
+        let spaces = match state.spaces.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                request.deny();
+                return;
+            }
+        };
+        let app = spaces
+            .iter()
+            .find(|s| s.space.id == space_id)
+            .and_then(|s| s.apps.iter().find(|a| a.id == app_id));
+        match app {
+            Some(a) => (a.permissions.camera, a.permissions.microphone),
+            None => {
+                request.deny();
+                return;
+            }
+        }
+    };
+
+    use crate::config::models::PermissionState;
+
+    let camera_decision = if wants_video { Some(camera_state) } else { None };
+    let mic_decision = if wants_audio { Some(microphone_state) } else { None };
+
+    let any_block = matches!(camera_decision, Some(PermissionState::Block))
+        || matches!(mic_decision, Some(PermissionState::Block));
+    let all_allow = camera_decision.map_or(true, |s| s == PermissionState::Allow)
+        && mic_decision.map_or(true, |s| s == PermissionState::Allow);
+    let any_ask = matches!(camera_decision, Some(PermissionState::Ask))
+        || matches!(mic_decision, Some(PermissionState::Ask));
+
+    if any_block {
+        request.deny();
+        return;
+    }
+    if all_allow && !any_ask {
+        request.allow();
+        return;
+    }
+
+    // At least one kind is Ask → stash and prompt the user.
+    {
+        let mut pending = match state.pending_media_requests.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                request.deny();
+                return;
+            }
+        };
+        // If a pending request already exists for this app, deny the new one to
+        // avoid queueing complexity.
+        if pending.contains_key(app_id) {
+            request.deny();
+            return;
+        }
+        pending.insert(
+            app_id.to_string(),
+            crate::state::PendingMediaRequest {
+                request: request.clone(),
+                wants_camera: wants_video,
+                wants_microphone: wants_audio,
+            },
+        );
+    }
+
+    let _ = app_handle.emit(
+        "media-permission-request",
+        serde_json::json!({
+            "space_id": space_id,
+            "app_id": app_id,
+            "camera": wants_video,
+            "microphone": wants_audio,
+        }),
+    );
+}
+
 fn resolve_data_directory(space: &SpaceConfig, app: &AppConfig) -> Result<std::path::PathBuf, String> {
     let use_per_app = space.space.isolation == IsolationMode::PerApp || app.isolation_override;
     if use_per_app {
@@ -192,12 +289,18 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
     ).map_err(|e| e.to_string())?;
 
     // On Linux: disable ITP and set cookie policy to accept all cookies
-    // so that Cloudflare challenges and similar cross-origin flows work properly
+    // so that Cloudflare challenges and similar cross-origin flows work properly.
+    // Also connect the WebKit permission-request signal to handle camera/microphone.
     #[cfg(target_os = "linux")]
     {
+        let app_handle_for_perm = app_handle.clone();
+        let space_id_for_perm = space_id.clone();
+        let app_id_for_perm = app_clone.id.clone();
         if let Some(webview) = app_handle.get_webview(&label) {
-            let _ = webview.with_webview(|platform_webview| {
-                use webkit2gtk::{WebViewExt, WebsiteDataManagerExt, CookieManagerExt};
+            let _ = webview.with_webview(move |platform_webview| {
+                use webkit2gtk::{
+                    CookieManagerExt, WebViewExt, WebsiteDataManagerExt,
+                };
                 let wk_webview = platform_webview.inner();
                 if let Some(data_manager) = wk_webview.website_data_manager() {
                     data_manager.set_itp_enabled(false);
@@ -205,6 +308,24 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
                         cookie_manager.set_accept_policy(webkit2gtk::CookieAcceptPolicy::Always);
                     }
                 }
+
+                // Media permission requests
+                let app_handle_inner = app_handle_for_perm.clone();
+                let space_id_inner = space_id_for_perm.clone();
+                let app_id_inner = app_id_for_perm.clone();
+                wk_webview.connect_permission_request(move |_wv, request| {
+                    use webkit2gtk::glib::Cast;
+                    if let Ok(media_req) = request.clone().downcast::<webkit2gtk::UserMediaPermissionRequest>() {
+                        handle_media_permission_request(
+                            &app_handle_inner,
+                            &space_id_inner,
+                            &app_id_inner,
+                            media_req,
+                        );
+                        return true; // we handled it (possibly async)
+                    }
+                    false
+                });
             });
         }
     }
