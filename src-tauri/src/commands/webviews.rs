@@ -140,6 +140,27 @@ fn handle_media_permission_request(
     );
 }
 
+#[cfg(target_os = "linux")]
+fn update_capture_state(app_handle: &AppHandle, app_id: &str, kind: &str, active: bool) {
+    let state = app_handle.state::<crate::state::AppState>();
+    if let Ok(mut captures) = state.active_captures.lock() {
+        let entry = captures.entry(app_id.to_string()).or_default();
+        match kind {
+            "camera" => entry.camera = active,
+            "microphone" => entry.microphone = active,
+            _ => {}
+        }
+    }
+    let _ = app_handle.emit(
+        "media-capture-changed",
+        serde_json::json!({
+            "app_id": app_id,
+            "kind": kind,
+            "active": active,
+        }),
+    );
+}
+
 fn resolve_data_directory(space: &SpaceConfig, app: &AppConfig) -> Result<std::path::PathBuf, String> {
     let use_per_app = space.space.isolation == IsolationMode::PerApp || app.isolation_override;
     if use_per_app {
@@ -325,6 +346,29 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
                         return true; // we handled it (possibly async)
                     }
                     false
+                });
+
+                // Capture-state notifications
+                let app_handle_cap = app_handle_for_perm.clone();
+                let app_id_cap = app_id_for_perm.clone();
+                wk_webview.connect_camera_capture_state_notify(move |wv| {
+                    use webkit2gtk::WebViewExt;
+                    let active = matches!(
+                        wv.camera_capture_state(),
+                        webkit2gtk::MediaCaptureState::Active
+                    );
+                    update_capture_state(&app_handle_cap, &app_id_cap, "camera", active);
+                });
+
+                let app_handle_cap2 = app_handle_for_perm.clone();
+                let app_id_cap2 = app_id_for_perm.clone();
+                wk_webview.connect_microphone_capture_state_notify(move |wv| {
+                    use webkit2gtk::WebViewExt;
+                    let active = matches!(
+                        wv.microphone_capture_state(),
+                        webkit2gtk::MediaCaptureState::Active
+                    );
+                    update_capture_state(&app_handle_cap2, &app_id_cap2, "microphone", active);
                 });
             });
         }
