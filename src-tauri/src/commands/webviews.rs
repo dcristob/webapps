@@ -572,6 +572,14 @@ pub fn open_in_browser(url: String) -> Result<(), String> {
     open::that(&url).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn eval_in_app(app_handle: AppHandle, app_id: String, script: String, state: State<'_, AppState>) -> Result<(), String> {
+    let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
+    let label = labels.get(&app_id).ok_or("Webview not found")?;
+    let webview = app_handle.get_webview(label).ok_or("Webview not found")?;
+    webview.eval(&script).map_err(|e| e.to_string())
+}
+
 fn parse_badge_count(title: &str) -> u32 {
     if let Some(start) = title.find('(') {
         if let Some(end) = title[start..].find(')') {

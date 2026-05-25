@@ -8,6 +8,7 @@
   import { initTitleListener } from "./lib/stores/apps";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { pendingRequest, setCapture } from "./lib/stores/permissions";
+  import { evalInApp } from "./lib/api";
 
   const params = new URLSearchParams(window.location.search);
   const mode = params.get("mode");
@@ -19,6 +20,62 @@
   const dialogAppIcon = decodeURIComponent(params.get("icon") ?? "auto");
   const dialogSpaceName = decodeURIComponent(params.get("spaceName") ?? "");
   const dialogSpaceColor = decodeURIComponent(params.get("spaceColor") ?? "#4a9eff");
+
+  const BANNER_JS = (kindsText: string, allowArgs: string, blockArgs: string) => `
+(function() {
+  var EXISTING = document.getElementById('__webapps_perm_banner');
+  if (EXISTING) EXISTING.remove();
+
+  var bar = document.createElement('div');
+  bar.id = '__webapps_perm_banner';
+  bar.style.cssText = [
+    'position:fixed','top:0','left:0','right:0','z-index:2147483647',
+    'background:#222','color:#fff','padding:10px 16px',
+    'font-family:-apple-system,BlinkMacSystemFont,sans-serif','font-size:14px',
+    'display:flex','align-items:center','gap:12px',
+    'box-shadow:0 2px 8px rgba(0,0,0,0.3)'
+  ].join(';') + ';';
+  bar.innerHTML =
+    '<span style="flex:1">' + ${JSON.stringify(`This app wants to use your ${kindsText}.`)} + '</span>' +
+    '<button id="__webapps_perm_allow" style="background:#4a9eff;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:14px">Allow</button>' +
+    '<button id="__webapps_perm_block" style="background:#444;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:14px">Block</button>';
+  document.documentElement.appendChild(bar);
+
+  document.getElementById('__webapps_perm_allow').addEventListener('click', function() {
+    window.__TAURI_INTERNALS__.invoke('respond_media_permission', ${allowArgs});
+    bar.remove();
+  });
+  document.getElementById('__webapps_perm_block').addEventListener('click', function() {
+    window.__TAURI_INTERNALS__.invoke('respond_media_permission', ${blockArgs});
+    bar.remove();
+  });
+})();
+`;
+
+  $effect(() => {
+    const req = $pendingRequest;
+    if (!req) return;
+
+    const kinds: string[] = [];
+    if (req.camera) kinds.push("camera");
+    if (req.microphone) kinds.push("microphone");
+    const kindsText = kinds.join(" and ");
+
+    const allowArgs = JSON.stringify({
+      spaceId: req.spaceId,
+      appId: req.appId,
+      camera: req.camera ? "allow" : null,
+      microphone: req.microphone ? "allow" : null,
+    });
+    const blockArgs = JSON.stringify({
+      spaceId: req.spaceId,
+      appId: req.appId,
+      camera: req.camera ? "block" : null,
+      microphone: req.microphone ? "block" : null,
+    });
+
+    evalInApp(req.appId, BANNER_JS(kindsText, allowArgs, blockArgs)).catch(() => {});
+  });
 
   let unlistenReq: UnlistenFn | null = null;
   let unlistenCap: UnlistenFn | null = null;
@@ -55,6 +112,7 @@
       unlistenChanged = await listen<{ app_id: string }>(
         "media-permission-changed",
         async () => {
+          pendingRequest.set(null);
           await loadSpaces();
         },
       );

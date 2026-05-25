@@ -138,6 +138,10 @@ export async function getAppPermissions(
   return invoke("get_app_permissions", { spaceId, appId });
 }
 
+export async function evalInApp(appId: string, script: string): Promise<void> {
+  return invoke("eval_in_app", { appId, script });
+}
+
 export async function respondMediaPermission(
   spaceId: string,
   appId: string,
