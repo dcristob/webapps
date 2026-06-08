@@ -1,6 +1,7 @@
 <script lang="ts">
   import { emit } from "@tauri-apps/api/event";
   import { createSpace, editSpace, closeDialog } from "../api";
+  import { autofocus } from "../actions";
 
   interface Props {
     mode: "create" | "edit";
@@ -17,7 +18,11 @@
 
   let { mode, spaceId = "", initialName = "", initialColor = "#4a9eff" }: Props = $props();
 
+  // Seeded from props once; the dialog is recreated on each open, so capturing
+  // the initial value (rather than staying reactive) is intended.
+  // svelte-ignore state_referenced_locally
   let name = $state(initialName);
+  // svelte-ignore state_referenced_locally
   let color = $state(initialColor);
 
   async function handleSubmit() {
@@ -49,7 +54,7 @@
 
   <label>
     Name
-    <input bind:value={name} placeholder="Space name..." onkeydown={(e) => e.key === "Enter" && handleSubmit()} autofocus />
+    <input bind:value={name} placeholder="Space name..." onkeydown={(e) => e.key === "Enter" && handleSubmit()} use:autofocus />
   </label>
 
   <div class="color-section">

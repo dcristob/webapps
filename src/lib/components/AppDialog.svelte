@@ -3,6 +3,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { addApp, editApp, fetchSiteInfo, closeDialog } from "../api";
+  import { autofocus } from "../actions";
 
   let { mode, spaceId, appId, initialName, initialUrl, initialIcon }: {
     mode: "add" | "edit";
@@ -13,10 +14,17 @@
     initialIcon?: string;
   } = $props();
 
+  // Form fields are seeded from props once; the dialog is recreated on each
+  // open, so capturing the initial value (rather than staying reactive) is
+  // the intended behaviour.
+  // svelte-ignore state_referenced_locally
   let url = $state(initialUrl ?? "");
+  // svelte-ignore state_referenced_locally
   let name = $state(initialName ?? "");
+  // svelte-ignore state_referenced_locally
   let icon = $state(initialIcon ?? "auto");
   let loading = $state(false);
+  // svelte-ignore state_referenced_locally
   let fetched = $state(mode === "edit");
 
   let iconPreviewSrc = $derived(
@@ -105,7 +113,7 @@
   <label>
     URL
     <div class="url-row">
-      <input bind:value={url} placeholder="https://example.com" onkeydown={(e) => e.key === "Enter" && (fetched ? handleSubmit() : handleFetchInfo())} autofocus={mode === "add"} />
+      <input bind:value={url} placeholder="https://example.com" onkeydown={(e) => e.key === "Enter" && (fetched ? handleSubmit() : handleFetchInfo())} use:autofocus={mode === "add"} />
       <button onclick={handleFetchInfo} disabled={loading}>{loading ? "..." : "Fetch"}</button>
     </div>
   </label>
@@ -113,7 +121,7 @@
   {#if fetched}
     <label>
       Name
-      <input bind:value={name} placeholder="App name" onkeydown={(e) => e.key === "Enter" && handleSubmit()} autofocus={mode === "edit"} />
+      <input bind:value={name} placeholder="App name" onkeydown={(e) => e.key === "Enter" && handleSubmit()} use:autofocus={mode === "edit"} />
     </label>
 
     <div class="icon-section">
