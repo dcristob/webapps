@@ -80,8 +80,8 @@ npm install
 # Dev mode (hot reload)
 npm run tauri dev
 
-# Build for production
-npm run tauri build
+# Build for production (see "Local Installation & Releases" below)
+npm run tauri -- build --no-bundle
 
 # Run Rust tests
 cd src-tauri && cargo test
@@ -89,6 +89,48 @@ cd src-tauri && cargo test
 # Run frontend linting
 npm run lint
 ```
+
+## Local Installation & Releases
+
+The maintainer runs Arch Linux (CachyOS) and installs WebApps by copying the
+binary — there is no package/installer step.
+
+- **Installed binary:** `~/.local/bin/webapps`
+- **Desktop entry:** `~/.local/share/applications/webapps.desktop`
+
+### Building a production binary
+
+You MUST build through the Tauri CLI. A bare `cargo build --release` does **not**
+embed the frontend — the resulting binary keeps pointing at the dev server
+(`http://localhost:1420`) and shows a blank screen once the dev server stops.
+The CLI build is what flips Tauri into production asset-embedding mode.
+
+```bash
+# Produces src-tauri/target/release/webapps with the frontend embedded.
+# --no-bundle skips deb/rpm/AppImage packaging (tauri.conf has "targets": "all");
+# we only need the raw binary to copy.
+npm run tauri -- build --no-bundle
+```
+
+Verify the frontend was embedded (should print an asset filename):
+
+```bash
+strings src-tauri/target/release/webapps | grep -o 'assets/index-[A-Za-z0-9_]*\.js'
+```
+
+### Updating the local copy (do this every time we merge to `main`)
+
+After merging a change to `main`, rebuild and refresh the installed copy:
+
+```bash
+git checkout main
+npm run tauri -- build --no-bundle
+cp -f src-tauri/target/release/webapps ~/.local/bin/webapps
+```
+
+**Close any running instance before launching the new one.** Two instances
+sharing `~/.config/webapps/webview-data/` corrupt each other's WebKit state
+(cookies/IndexedDB), which manifests as a garbled UI or broken sessions.
 
 ## Conventions
 
