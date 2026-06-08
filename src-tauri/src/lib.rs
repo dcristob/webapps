@@ -92,6 +92,29 @@ pub fn run() {
                 .icon(icon)?
                 .build()?;
 
+            // On Linux: draw a 1px white border around the window while it is
+            // focused. Budgie/Mutter on Wayland never draws server-side
+            // decorations, and our webviews (the content one loads third-party
+            // sites) cover the window edges, so the GTK theme's focused-window
+            // border can't show through. Instead we pad the window by 1px and
+            // paint its own background white; GTK's `:backdrop` state removes it
+            // when the window loses focus.
+            #[cfg(target_os = "linux")]
+            {
+                use gtk::prelude::*;
+                if let Ok(gtk_window) = window.gtk_window() {
+                    let provider = gtk::CssProvider::new();
+                    let _ = provider.load_from_data(
+                        b"window { background-color: #ffffff; padding: 1px; } \
+                          window:backdrop { background-color: transparent; }",
+                    );
+                    gtk_window.style_context().add_provider(
+                        &provider,
+                        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                    );
+                }
+            }
+
             let size = window.inner_size()?;
             let scale = window.scale_factor()?;
             let logical_width = size.width as f64 / scale;
@@ -297,6 +320,7 @@ pub fn run() {
             commands::permissions::set_app_permission,
             commands::permissions::get_app_permissions,
             commands::permissions::respond_media_permission,
+            commands::permissions::check_app_media_permissions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

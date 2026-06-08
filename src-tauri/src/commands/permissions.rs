@@ -1,8 +1,26 @@
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, State, Webview};
 
 use crate::config::models::{AppPermissions, MediaKind, PermissionState};
 use crate::config::storage;
 use crate::state::AppState;
+
+#[tauri::command]
+pub fn check_app_media_permissions(
+    webview: Webview,
+    state: State<'_, AppState>,
+) -> Result<AppPermissions, String> {
+    let label = webview.label().to_string();
+    let app_id = label
+        .strip_prefix("app-")
+        .ok_or_else(|| format!("Not an app webview: {}", label))?;
+    let spaces = state.spaces.lock().map_err(|e| e.to_string())?;
+    for space in spaces.iter() {
+        if let Some(app) = space.apps.iter().find(|a| a.id == app_id) {
+            return Ok(app.permissions.clone());
+        }
+    }
+    Err(format!("App '{}' not found", app_id))
+}
 
 #[tauri::command]
 pub fn set_app_permission(

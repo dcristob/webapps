@@ -15,6 +15,51 @@ use crate::state::AppState;
 const TOPBAR_HEIGHT: f64 = 48.0;
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
+const MEDIA_GUARD_JS: &str = r#"
+(function() {
+  if (window.__webapps_media_guard_installed) return;
+  window.__webapps_media_guard_installed = true;
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+
+  var realGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+  var activeStreams = new Set();
+
+  navigator.mediaDevices.getUserMedia = async function(constraints) {
+    constraints = constraints || {};
+    var wantsVideo = !!constraints.video;
+    var wantsAudio = !!constraints.audio;
+
+    try {
+      var perms = await window.__TAURI_INTERNALS__.invoke('check_app_media_permissions');
+      if ((wantsVideo && perms.camera === 'block') ||
+          (wantsAudio && perms.microphone === 'block')) {
+        throw new DOMException('Permission denied by user', 'NotAllowedError');
+      }
+    } catch (e) {
+      if (e && e.name === 'NotAllowedError') throw e;
+      // If the permission check fails for any other reason, fall through to real GUM.
+    }
+
+    var stream = await realGUM(constraints);
+    activeStreams.add(stream);
+    return stream;
+  };
+
+  document.addEventListener('__webapps_revoke_media', function(e) {
+    var kind = e.detail && e.detail.kind;
+    activeStreams.forEach(function(stream) {
+      stream.getTracks().forEach(function(track) {
+        if ((kind === 'camera' && track.kind === 'video') ||
+            (kind === 'microphone' && track.kind === 'audio')) {
+          track.stop();
+        }
+      });
+    });
+  });
+})();
+"#;
+
 const LINK_INTERCEPTOR_JS: &str = r#"
 (function() {
   var baseHostname = window.location.hostname;
@@ -337,6 +382,9 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
 
     let webview_builder = webview_builder
         .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                let _ = webview.eval(MEDIA_GUARD_JS);
+            }
             if payload.event() == tauri::webview::PageLoadEvent::Finished {
                 let _ = webview.eval(LINK_INTERCEPTOR_JS);
             }
@@ -392,9 +440,9 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
                 let app_id_cap = app_id_for_perm.clone();
                 wk_webview.connect_camera_capture_state_notify(move |wv| {
                     use webkit2gtk::WebViewExt;
-                    let active = matches!(
+                    let active = !matches!(
                         wv.camera_capture_state(),
-                        webkit2gtk::MediaCaptureState::Active
+                        webkit2gtk::MediaCaptureState::None
                     );
                     update_capture_state(&app_handle_cap, &app_id_cap, "camera", active);
                 });
@@ -403,9 +451,9 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
                 let app_id_cap2 = app_id_for_perm.clone();
                 wk_webview.connect_microphone_capture_state_notify(move |wv| {
                     use webkit2gtk::WebViewExt;
-                    let active = matches!(
+                    let active = !matches!(
                         wv.microphone_capture_state(),
-                        webkit2gtk::MediaCaptureState::Active
+                        webkit2gtk::MediaCaptureState::None
                     );
                     update_capture_state(&app_handle_cap2, &app_id_cap2, "microphone", active);
                 });

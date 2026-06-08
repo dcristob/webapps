@@ -3,7 +3,7 @@
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { activeCaptures, setCapture } from "../stores/permissions";
   import { spaces, loadSpaces } from "../stores/spaces";
-  import { setAppPermission, webviewReload } from "../api";
+  import { setAppPermission, webviewReload, evalInApp } from "../api";
 
   let activeAppId = $state<string | null>(null);
   let unlistenCap: UnlistenFn | null = null;
@@ -63,9 +63,9 @@
       await webviewReload();
     } else if (state === "allow") {
       await setAppPermission(app.spaceId, app.app.id, kind, "block");
-      if (captures.camera || captures.microphone) {
-        await webviewReload();
-      }
+      // Stop any active tracks in the page so the device is released immediately.
+      const revokeJs = `document.dispatchEvent(new CustomEvent('__webapps_revoke_media', { detail: { kind: ${JSON.stringify(kind)} } }));`;
+      try { await evalInApp(app.app.id, revokeJs); } catch (_) {}
     }
   }
 </script>
