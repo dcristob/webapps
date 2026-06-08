@@ -13,7 +13,14 @@ use crate::config::storage;
 use crate::state::AppState;
 
 const TOPBAR_HEIGHT: f64 = 48.0;
-const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+// NOTE: We present as Safari (real WebKit), NOT a spoofed Chrome. Microsoft
+// negotiates its auth flow from the User-Agent: a Chromium UA makes it serve
+// the EAR (Encrypted Authentication Response) flow, which relies on
+// Chromium-specific crypto/storage behavior our WebKitGTK engine can't
+// complete — causing the SharePoint/Azure-AD login to loop and fail with
+// "We couldn't sign you in." A Safari UA matches our actual engine, so the
+// served flow is WebKit-compatible.
+const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15";
 
 const MEDIA_GUARD_JS: &str = r#"
 (function() {
@@ -321,6 +328,16 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
         .ok()
         .and_then(|u| u.host_str().map(|h| h.to_string()));
 
+    // SSO/OAuth popups must live in the SAME WebKit web context as the app
+    // webview that opened them. tauri-runtime-wry keys web contexts by
+    // data_directory, so giving the popup the parent's data_directory makes
+    // them share one WebKitWebContext. That shared context is what gives the
+    // popup the parent's cookies/session AND a live `window.opener` +
+    // postMessage channel back to the opener. Without it, Microsoft auth lands
+    // its session in a separate cookie jar ("we could not authenticate your
+    // user") and Google Identity Services hangs waiting on a dead opener.
+    let popup_data_dir = data_dir.clone();
+
     let webview_builder = WebviewBuilder::new(&label, webview_url)
         .user_agent(USER_AGENT)
         .data_directory(data_dir)
@@ -343,6 +360,7 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
                 )
                 .window_features(features)
                 .user_agent(USER_AGENT)
+                .data_directory(popup_data_dir.clone())
                 .inner_size(500.0, 700.0)
                 .title(url.as_str())
                 .build()
