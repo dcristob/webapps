@@ -67,33 +67,191 @@ const MEDIA_GUARD_JS: &str = r#"
 })();
 "#;
 
-const LINK_INTERCEPTOR_JS: &str = r#"
-(function() {
+/// The registrable domain (eTLD+1) of `host`, e.g. `docs.google.com` -> `google.com`.
+/// Returns `None` for single-label hosts with no eTLD+1 (e.g. `localhost`).
+fn registrable_domain(host: &str) -> Option<&str> {
+    psl::domain_str(host)
+}
+
+/// Build the click interceptor injected into each app webview, run in the
+/// capture phase (before the page reacts to the click):
+///
+/// - Third-party links (different registrable domain) go to the system browser.
+/// - Same-site links that target a new window/tab open as an in-app popup.
+///   WebKitGTK does not reliably open same-site `target="_blank"` anchors, and
+///   apps like Google Drive open docs by synthesizing such an anchor and
+///   `.click()`-ing it — a non-user-gesture the engine's popup blocker kills.
+///   Handling it here in capture (while `defaultPrevented` is still false) lets
+///   us route it to a popup ourselves.
+/// - Same-site same-tab links are left alone to navigate normally.
+///
+/// `base_domain` is the app's registrable domain (e.g. `google.com`); when
+/// `None` (IP/localhost apps) we fall back to an exact-hostname comparison.
+fn build_link_interceptor_js(app_id: &str, base_domain: Option<&str>) -> String {
+    // serde_json renders a safely-quoted JS string literal (or `null`).
+    let app_id_literal = serde_json::to_string(app_id).unwrap_or_else(|_| "\"\"".to_string());
+    let base_domain_literal = match base_domain {
+        Some(d) => serde_json::to_string(d).unwrap_or_else(|_| "null".to_string()),
+        None => "null".to_string(),
+    };
+    format!(
+        r#"
+(function() {{
+  var APP_ID = {app_id_literal};
   var baseHostname = window.location.hostname;
+  var baseDomain = {base_domain_literal};
 
-  document.addEventListener('click', function(e) {
-    var el = e.target;
-    while (el && el.tagName !== 'A') {
-      el = el.parentElement;
-    }
-    if (!el) return;
+  function invoke(cmd, args) {{
+    if (window.__TAURI_INTERNALS__) {{
+      try {{ window.__TAURI_INTERNALS__.invoke(cmd, args); }} catch (e) {{}}
+    }}
+  }}
 
-    var href = el.href;
-    if (!href) return;
+  function isSameSite(host) {{
+    if (baseDomain) {{
+      return host === baseDomain || host.endsWith('.' + baseDomain);
+    }}
+    return host === baseHostname;
+  }}
 
-    var protocol = el.protocol;
-    if (protocol !== 'http:' && protocol !== 'https:') return;
+  function findAnchor(node) {{
+    while (node && node.tagName !== 'A') {{ node = node.parentElement; }}
+    return node;
+  }}
 
-    if (el.hostname !== baseHostname) {
+  function isHttp(el) {{
+    return el.protocol === 'http:' || el.protocol === 'https:';
+  }}
+
+  // True when the anchor targets a NEW window/tab (target=_blank or a named
+  // target), as opposed to navigating the current frame.
+  function opensNewWindow(el) {{
+    var t = (el.target || '').toLowerCase();
+    return t === '_blank' || (t && t !== '_self' && t !== '_top' && t !== '_parent');
+  }}
+
+  document.addEventListener('click', function(e) {{
+    var el = findAnchor(e.target);
+    if (!el || !el.href || !isHttp(el)) return;
+
+    if (!isSameSite(el.hostname)) {{
+      // Third-party: hand off to the system browser.
       e.preventDefault();
       e.stopPropagation();
-      if (window.__TAURI_INTERNALS__) {
-        window.__TAURI_INTERNALS__.invoke('open_in_browser', { url: href });
-      }
-    }
-  }, true);
-})();
-"#;
+      invoke('open_in_browser', {{ url: el.href }});
+      return;
+    }}
+
+    if (opensNewWindow(el)) {{
+      // Same-site new-window link: open it in an in-app popup.
+      e.preventDefault();
+      e.stopPropagation();
+      invoke('open_blank_popup', {{ appId: APP_ID, url: el.href }});
+    }}
+    // Same-site same-tab link: let it navigate normally.
+  }}, true);
+}})();
+"#
+    )
+}
+
+/// Override `window.open` so Google Drive's "blank-first" popup pattern works.
+///
+/// Drive opens a doc by calling `window.open()` with NO url during the click
+/// gesture (to grab a handle synchronously), then later sets `win.location` to
+/// the doc URL. On WebKitGTK that blank `window.open` produces a navigation
+/// action with no request URI, which wry rejects before our `on_new_window`
+/// handler ever runs — so `window.open()` returns null and Drive reports
+/// "Browser blocked opening a window".
+///
+/// We intercept in JS: for a real URL we defer to the native `window.open`
+/// (whose new-window handler routes SSO/same-site/external correctly and keeps
+/// a live `window.opener`); for the blank case we return a Proxy that emulates
+/// just enough of a Window so the page can set `location`, and forward that URL
+/// to the `open_blank_popup` command, which opens it in-app or in the browser.
+fn build_window_open_override_js(app_id: &str, base_domain: Option<&str>) -> String {
+    let app_id_literal = serde_json::to_string(app_id).unwrap_or_else(|_| "\"\"".to_string());
+    let base_domain_literal = match base_domain {
+        Some(d) => serde_json::to_string(d).unwrap_or_else(|_| "null".to_string()),
+        None => "null".to_string(),
+    };
+    format!(
+        r#"
+(function() {{
+  if (window.__webapps_open_override) return;
+  window.__webapps_open_override = true;
+
+  var APP_ID = {app_id_literal};
+  var BASE_DOMAIN = {base_domain_literal};
+  var realOpen = window.open ? window.open.bind(window) : null;
+
+  function invoke(cmd, args) {{
+    if (window.__TAURI_INTERNALS__) {{
+      try {{ return window.__TAURI_INTERNALS__.invoke(cmd, args); }} catch (e) {{}}
+    }}
+  }}
+
+  function openInApp(u) {{
+    if (!u || u === 'about:blank') return;
+    invoke('open_blank_popup', {{ appId: APP_ID, url: u }});
+  }}
+
+  // A minimal Window stand-in. Drive sets `.location` (string), `.location.href`,
+  // or calls `.location.assign(...)`; any of those triggers the in-app popup.
+  function makeProxy() {{
+    var opened = false;
+    function go(u) {{ if (opened || !u) return; opened = true; openInApp(String(u)); }}
+
+    var loc = {{
+      assign: function(u) {{ go(u); }},
+      replace: function(u) {{ go(u); }},
+      reload: function() {{}},
+      toString: function() {{ return 'about:blank'; }}
+    }};
+    var locProxy = new Proxy(loc, {{
+      get: function(t, p) {{ if (p === 'href') return 'about:blank'; return t[p]; }},
+      set: function(t, p, v) {{ if (p === 'href') go(v); t[p] = v; return true; }}
+    }});
+
+    var win = {{
+      closed: false,
+      focus: function() {{}},
+      blur: function() {{}},
+      close: function() {{ win.closed = true; }},
+      postMessage: function() {{}},
+      document: {{ write: function() {{}}, writeln: function() {{}}, open: function() {{}}, close: function() {{}} }}
+    }};
+    return new Proxy(win, {{
+      get: function(t, p) {{
+        if (p === 'location') return locProxy;
+        if (p in t) return t[p];
+        return undefined;
+      }},
+      set: function(t, p, v) {{
+        if (p === 'location') {{ go(typeof v === 'string' ? v : (v && v.href)); return true; }}
+        t[p] = v; return true;
+      }}
+    }});
+  }}
+
+  window.open = function(url, target, features) {{
+    var resolved = '';
+    try {{ resolved = url ? new URL(url, window.location.href).href : ''; }}
+    catch (e) {{ resolved = url ? String(url) : ''; }}
+
+    if (resolved && resolved !== 'about:blank') {{
+      // Real URL: the native path already routes correctly and preserves opener.
+      if (realOpen) return realOpen(url, target, features);
+      openInApp(resolved);
+      return makeProxy();
+    }}
+    // Blank-first popup: the engine blocks this, so emulate it ourselves.
+    return makeProxy();
+  }};
+}})();
+"#
+    )
+}
 
 #[cfg(target_os = "linux")]
 fn handle_media_permission_request(
@@ -328,6 +486,23 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
         .ok()
         .and_then(|u| u.host_str().map(|h| h.to_string()));
 
+    // Registrable domain (eTLD+1) of the app, e.g. drive.google.com -> google.com.
+    // Used to keep same-site `window.open` targets (docs.google.com) in-app while
+    // still sending genuinely third-party links to the system browser.
+    let base_registrable_domain = base_url_host
+        .as_deref()
+        .and_then(|h| registrable_domain(h).map(|d| d.to_string()));
+
+    // Pre-render the click interceptor with the app's registrable domain baked in,
+    // so the JS and the on_new_window path agree on what counts as "same site".
+    let link_interceptor_js =
+        build_link_interceptor_js(&app_clone.id, base_registrable_domain.as_deref());
+
+    // Pre-render the window.open override (handles Drive's blank-first popups,
+    // which the engine blocks before on_new_window can run).
+    let window_open_override_js =
+        build_window_open_override_js(&app_clone.id, base_registrable_domain.as_deref());
+
     // SSO/OAuth popups must live in the SAME WebKit web context as the app
     // webview that opened them. tauri-runtime-wry keys web contexts by
     // data_directory, so giving the popup the parent's data_directory makes
@@ -345,15 +520,12 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
         .on_new_window(move |url, features| {
             let host = url.host_str().unwrap_or("");
 
-            if host == "accounts.google.com"
-                || host == "appleid.apple.com"
-                || host == "login.microsoftonline.com"
-                || host == "github.com"
-                || host.ends_with(".github.com")
-            {
+            // Open `url` in an in-app popup window that shares the app's WebKit web
+            // context (cookies + live window.opener) via the parent's data_directory.
+            let make_popup = |features| {
                 let popup_id = POPUP_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let popup_label = format!("popup-{}", popup_id);
-                if let Ok(window) = WebviewWindowBuilder::new(
+                match WebviewWindowBuilder::new(
                     &app_handle_for_nav,
                     &popup_label,
                     WebviewUrl::External("about:blank".parse().unwrap()),
@@ -365,25 +537,51 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
                 .title(url.as_str())
                 .build()
                 {
-                    return NewWindowResponse::Create { window };
+                    Ok(window) => NewWindowResponse::Create { window },
+                    Err(_) => NewWindowResponse::Allow,
                 }
-                return NewWindowResponse::Allow;
+            };
+
+            // 0. Blank / opener-relative window (empty host). Google Drive opens
+            //    docs by calling window.open('') during the click gesture to grab a
+            //    handle, then setting win.location to the doc URL. Such a window
+            //    inherits the opener's origin, so it's same-site by definition —
+            //    keep it in-app. Denying it instead makes window.open() return null,
+            //    which Drive surfaces as "Browser blocked opening a window".
+            if host.is_empty() {
+                return make_popup(features);
             }
 
-            let is_external = base_url_host
-                .as_ref()
-                .map(|base| host != base.as_str())
-                .unwrap_or(true);
+            // 1. Cross-domain SSO/OAuth providers: always in-app popups. These live
+            //    on a different registrable domain than the app (e.g.
+            //    login.microsoftonline.com opened from a *.sharepoint.com app), so
+            //    the registrable-domain rule below would miss them.
+            if is_sso_host(host) {
+                return make_popup(features);
+            }
 
-            if is_external {
-                let _ = open::that(url.as_str());
+            // 2. Exact same host: navigate the current webview in place rather than
+            //    spawning a popup (preserves the single-window feel for in-app links).
+            if base_url_host.as_deref() == Some(host) {
+                if let Some(webview) = app_handle_for_nav.get_webview(&label_for_nav) {
+                    let url_str = url.as_str().replace('\\', "\\\\").replace('\'', "\\'");
+                    let _ = webview.eval(&format!("window.location.href = '{}'", url_str));
+                }
                 return NewWindowResponse::Deny;
             }
 
-            if let Some(webview) = app_handle_for_nav.get_webview(&label_for_nav) {
-                let url_str = url.as_str().replace('\\', "\\\\").replace('\'', "\\'");
-                let _ = webview.eval(&format!("window.location.href = '{}'", url_str));
+            // 3. Same registrable domain, different host (e.g. docs.google.com opened
+            //    from drive.google.com): keep it in-app as a popup.
+            let same_site = match (&base_registrable_domain, registrable_domain(host)) {
+                (Some(base), Some(new)) => base.as_str() == new,
+                _ => false,
+            };
+            if same_site {
+                return make_popup(features);
             }
+
+            // 4. Genuinely third-party: hand off to the system browser.
+            let _ = open::that(url.as_str());
             NewWindowResponse::Deny
         })
         .on_document_title_changed(move |_webview, title| {
@@ -399,12 +597,13 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
         });
 
     let webview_builder = webview_builder
-        .on_page_load(|webview, payload| {
+        .on_page_load(move |webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 let _ = webview.eval(MEDIA_GUARD_JS);
+                let _ = webview.eval(&window_open_override_js);
             }
             if payload.event() == tauri::webview::PageLoadEvent::Finished {
-                let _ = webview.eval(LINK_INTERCEPTOR_JS);
+                let _ = webview.eval(&link_interceptor_js);
             }
         });
 
@@ -650,6 +849,121 @@ pub fn open_in_browser(url: String) -> Result<(), String> {
     open::that(&url).map_err(|e| e.to_string())
 }
 
+/// True for the cross-domain SSO/OAuth hosts we always keep as in-app popups.
+fn is_sso_host(host: &str) -> bool {
+    host == "accounts.google.com"
+        || host == "appleid.apple.com"
+        || host == "login.microsoftonline.com"
+        || host == "github.com"
+        || host.ends_with(".github.com")
+}
+
+/// Open a URL that a page requested via the blank-first `window.open` pattern
+/// (see [`build_window_open_override_js`]). Applies the same routing as the
+/// native new-window handler: SSO and same-registrable-domain targets open as an
+/// in-app popup sharing the app's web context; everything else goes to the
+/// system browser.
+#[tauri::command]
+pub fn open_blank_popup(
+    app_handle: AppHandle,
+    app_id: String,
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let (space_clone, app_clone) = {
+        let spaces = state.spaces.lock().map_err(|e| e.to_string())?;
+        spaces
+            .iter()
+            .find_map(|s| {
+                s.apps
+                    .iter()
+                    .find(|a| a.id == app_id)
+                    .map(|a| (s.clone(), a.clone()))
+            })
+            .ok_or_else(|| format!("App '{}' not found", app_id))?
+    };
+
+    let target = url::Url::parse(&url).map_err(|e| e.to_string())?;
+    let host = target.host_str().unwrap_or("");
+
+    let base_host = url::Url::parse(&app_clone.url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_string()));
+    let base_registrable = base_host
+        .as_deref()
+        .and_then(|h| registrable_domain(h).map(|d| d.to_string()));
+
+    let same_site = base_host.as_deref() == Some(host)
+        || match (&base_registrable, registrable_domain(host)) {
+            (Some(b), Some(n)) => b.as_str() == n,
+            _ => false,
+        };
+
+    if !is_sso_host(host) && !same_site {
+        return open::that(&url).map_err(|e| e.to_string());
+    }
+
+    let data_dir = resolve_data_directory(&space_clone, &app_clone)?;
+    let popup_id = POPUP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let popup_label = format!("popup-{}", popup_id);
+
+    // Build on about:blank, then (on Linux) strip wry's injected user scripts and
+    // navigate to the real URL — see `finalize_popup` for why. On other platforms
+    // there's no API to strip the scripts, so just load the URL directly.
+    let blank = "about:blank"
+        .parse()
+        .map_err(|e: url::ParseError| e.to_string())?;
+    let popup = WebviewWindowBuilder::new(&app_handle, &popup_label, WebviewUrl::External(blank))
+        .user_agent(USER_AGENT)
+        .data_directory(data_dir)
+        .inner_size(900.0, 720.0)
+        .title(&url)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "linux")]
+    finalize_popup(&popup, &url);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let js = format!("location.replace({})", serde_json::to_string(&url).unwrap());
+        let _ = popup.eval(&js);
+    }
+    Ok(())
+}
+
+/// Finish setting up an in-app popup webview on Linux/WebKitGTK.
+///
+/// wry injects `window.ipc` as a non-configurable, non-writable, non-enumerable
+/// property (its IPC bridge). Google Sheets and Excel Online declare a global
+/// `function ipc`, which throws a `TypeError` against that locked property and
+/// aborts their bootstrap ("Problema al cargar" / clear-cache prompt). wry adds
+/// that script before any of ours, so we can't fix it from JS. Popups are plain
+/// web content that never call the Tauri IPC, so we remove all of wry's injected
+/// user scripts here and only then navigate to the real URL — so the offending
+/// `ipc` definition never runs for the document load. The shared web context
+/// (cookies/session) is unaffected, since it lives in the data directory, not in
+/// these scripts.
+#[cfg(target_os = "linux")]
+fn finalize_popup(window: &tauri::WebviewWindow, url: &str) {
+    let url = url.to_string();
+    let _ = window.with_webview(move |platform_webview| {
+        use webkit2gtk::{
+            CookieManagerExt, UserContentManagerExt, WebViewExt, WebsiteDataManagerExt,
+        };
+        let wk = platform_webview.inner();
+        if let Some(ucm) = wk.user_content_manager() {
+            ucm.remove_all_scripts();
+        }
+        if let Some(dm) = wk.website_data_manager() {
+            dm.set_itp_enabled(false);
+            if let Some(cm) = dm.cookie_manager() {
+                cm.set_accept_policy(webkit2gtk::CookieAcceptPolicy::Always);
+            }
+        }
+        wk.load_uri(&url);
+    });
+}
+
 #[tauri::command]
 pub fn eval_in_app(app_handle: AppHandle, app_id: String, script: String, state: State<'_, AppState>) -> Result<(), String> {
     let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
@@ -669,4 +983,72 @@ fn parse_badge_count(title: &str) -> u32 {
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Returns whether `host` should be treated as same-site as an app whose
+    /// host is `base_host`. Mirrors the registrable-domain decision used in the
+    /// `on_new_window` closure (step 3).
+    fn same_site(base_host: &str, host: &str) -> bool {
+        let base = registrable_domain(base_host);
+        match (base, registrable_domain(host)) {
+            (Some(b), Some(n)) => b == n,
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn registrable_domain_collapses_subdomains() {
+        assert_eq!(registrable_domain("docs.google.com"), Some("google.com"));
+        assert_eq!(registrable_domain("drive.google.com"), Some("google.com"));
+        assert_eq!(registrable_domain("google.com"), Some("google.com"));
+    }
+
+    #[test]
+    fn registrable_domain_handles_multipart_suffixes() {
+        // A naive last-two-labels heuristic would wrongly say "co.uk" here.
+        assert_eq!(registrable_domain("www.bbc.co.uk"), Some("bbc.co.uk"));
+        assert_eq!(registrable_domain("shop.example.com.au"), Some("example.com.au"));
+    }
+
+    #[test]
+    fn registrable_domain_none_for_single_label_host() {
+        // Single-label hosts have no eTLD+1, so we fall back to exact-host matching.
+        assert_eq!(registrable_domain("localhost"), None);
+    }
+
+    #[test]
+    fn same_site_keeps_sibling_subdomains_together() {
+        // The motivating case: Google Drive opening a Google Doc.
+        assert!(same_site("drive.google.com", "docs.google.com"));
+        assert!(same_site("www.bbc.co.uk", "news.bbc.co.uk"));
+    }
+
+    #[test]
+    fn same_site_rejects_third_parties_and_lookalikes() {
+        assert!(!same_site("drive.google.com", "dropbox.com"));
+        // Multi-part suffix means these are NOT the same registrable domain.
+        assert!(!same_site("foo.github.io", "bar.github.io"));
+        // A lookalike host on a different registrable domain.
+        assert!(!same_site("drive.google.com", "google.com.attacker.com"));
+    }
+
+    #[test]
+    fn link_interceptor_bakes_in_registrable_domain() {
+        let js = build_link_interceptor_js("app-1", Some("google.com"));
+        assert!(js.contains(r#"var baseDomain = "google.com";"#));
+        assert!(js.contains(r#"var APP_ID = "app-1";"#));
+        // The endsWith guard is what keeps subdomains same-site.
+        assert!(js.contains("host.endsWith('.' + baseDomain)"));
+    }
+
+    #[test]
+    fn link_interceptor_falls_back_to_exact_host_when_no_domain() {
+        let js = build_link_interceptor_js("app-1", None);
+        assert!(js.contains("var baseDomain = null;"));
+        assert!(js.contains("host === baseHostname"));
+    }
 }
