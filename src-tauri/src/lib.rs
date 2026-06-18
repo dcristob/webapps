@@ -317,6 +317,7 @@ pub fn run() {
             commands::webviews::open_blank_popup,
             commands::webviews::eval_in_app,
             commands::favicon::fetch_site_info,
+            commands::favicon::capture_favicon_done,
             commands::dialog::show_dialog,
             commands::dialog::close_dialog,
             commands::permissions::set_app_permission,

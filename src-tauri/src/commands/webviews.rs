@@ -11,6 +11,7 @@ static POPUP_COUNTER: AtomicU32 = AtomicU32::new(0);
 use crate::config::models::*;
 use crate::config::storage;
 use crate::state::AppState;
+use crate::commands::favicon::build_favicon_capture_js;
 
 const TOPBAR_HEIGHT: f64 = 48.0;
 // NOTE: We present as Safari (real WebKit), NOT a spoofed Chrome. Microsoft
@@ -494,6 +495,9 @@ pub fn ensure_app_open(
     let app_id_for_title = app_clone.id.clone();
     let app_handle_for_title = app_handle.clone();
 
+    let app_id_for_capture = app_clone.id.clone();
+    let app_handle_for_capture = app_handle.clone();
+
     let label_for_nav = label.clone();
     let app_handle_for_nav = app_handle.clone();
 
@@ -619,6 +623,16 @@ pub fn ensure_app_open(
             }
             if payload.event() == tauri::webview::PageLoadEvent::Finished {
                 let _ = webview.eval(&link_interceptor_js);
+                // If an icon refetch is pending for this app, inject the
+                // capture script (it waits for load + debounce, then reports
+                // the authenticated DOM's favicon URLs back to Rust).
+                let state = app_handle_for_capture.state::<AppState>();
+                let guard = state.pending_icon_captures.lock();
+                if let Ok(guard) = guard {
+                    if guard.contains_key(&app_id_for_capture) {
+                        let _ = webview.eval(&build_favicon_capture_js(&app_id_for_capture));
+                    }
+                }
             }
         });
 

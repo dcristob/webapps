@@ -1,8 +1,10 @@
 use std::fs;
 
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
+use tauri::State;
 
 use crate::config::storage;
+use crate::state::AppState;
 
 /// Build a reqwest client with a browser-like User-Agent
 fn http_client() -> Result<reqwest::Client, String> {
@@ -433,6 +435,21 @@ fn detect_image_format(bytes: &[u8]) -> Option<&'static str> {
     }
 
     None
+}
+
+/// Receiver half of the icon-capture bridge. Called from JS (via
+/// `__TAURI_INTERNALS__.invoke`) once `build_favicon_capture_js` has collected
+/// the favicon URLs from the live webview DOM. Resolves the oneshot that
+/// `refetch_app_icon` is awaiting. No-op if no capture is pending for this app
+/// (e.g. a stale injection arriving after `refetch_app_icon` timed out).
+#[tauri::command]
+pub fn capture_favicon_done(app_id: String, urls: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
+    let mut pending = state.pending_icon_captures.lock().map_err(|e| e.to_string())?;
+    if let Some(sender) = pending.remove(&app_id) {
+        // Receiver may have been dropped on timeout; ignore send errors.
+        let _ = sender.send(urls);
+    }
+    Ok(())
 }
 
 /// Build the favicon-capture script injected into an app webview during an
