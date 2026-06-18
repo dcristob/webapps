@@ -318,6 +318,7 @@ pub fn run() {
             commands::webviews::eval_in_app,
             commands::favicon::fetch_site_info,
             commands::favicon::capture_favicon_done,
+            commands::favicon::refetch_app_icon,
             commands::dialog::show_dialog,
             commands::dialog::close_dialog,
             commands::permissions::set_app_permission,

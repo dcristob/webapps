@@ -5,6 +5,8 @@ use tauri::State;
 
 use crate::config::storage;
 use crate::state::AppState;
+use std::time::Duration;
+use tauri::{AppHandle, Manager};
 
 /// Build a reqwest client with a browser-like User-Agent
 fn http_client() -> Result<reqwest::Client, String> {
@@ -448,6 +450,144 @@ pub fn capture_favicon_done(app_id: String, urls: Vec<String>, state: State<'_, 
     if let Some(sender) = pending.remove(&app_id) {
         // Receiver may have been dropped on timeout; ignore send errors.
         let _ = sender.send(urls);
+    }
+    Ok(())
+}
+
+/// Capture the favicon from an app's live (authenticated) webview.
+///
+/// If the webview is already open, the capture script is eval'd directly
+/// against the loaded page. Otherwise the webview is created via
+/// `ensure_app_open` (its persisted cookies load the authenticated page),
+/// and the `on_page_load(Finished)` hook injects the capture script on first
+/// load. The script reports the DOM's favicon URLs back via
+/// `capture_favicon_done`; this command awaits that with a 25 s timeout, then
+/// downloads the first working URL. The previously-active app is restored
+/// afterwards so the user's view isn't hijacked by the auto-open.
+///
+/// Returns the new local icon path. Does NOT persist it to the app config —
+/// the frontend's Save action does that via `edit_app`, consistent with other
+/// edits.
+#[tauri::command]
+pub async fn refetch_app_icon(
+    app_handle: AppHandle,
+    space_id: String,
+    app_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    // Resolve the target app + remember the currently-active app to restore later.
+    let (app_url, app_name, prev_active) = {
+        let spaces = state.spaces.lock().map_err(|e| e.to_string())?;
+        let app = spaces
+            .iter()
+            .flat_map(|s| s.apps.iter())
+            .find(|a| a.id == app_id)
+            .ok_or_else(|| format!("App '{}' not found", app_id))?;
+        let url = app.url.clone();
+        let name = app.name.clone();
+        let active = state.active_app_id.lock().map_err(|e| e.to_string())?.clone();
+        (url, name, active)
+    };
+
+    // Refuse a double-refetch for the same app (would orphan the first awaiter).
+    {
+        let pending = state.pending_icon_captures.lock().map_err(|e| e.to_string())?;
+        if pending.contains_key(&app_id) {
+            return Err("An icon refetch is already in progress for this app".to_string());
+        }
+    }
+
+    // Register the oneshot BEFORE opening / eval'ing, so the on_page_load hook
+    // and the direct eval both see a pending entry.
+    let (tx, rx) = tokio::sync::oneshot::channel::<Vec<String>>();
+    {
+        let mut pending = state.pending_icon_captures.lock().map_err(|e| e.to_string())?;
+        pending.insert(app_id.clone(), tx);
+    }
+
+    // Decide injection path based on whether the webview already exists.
+    let already_open = {
+        let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
+        labels.contains_key(&app_id)
+    };
+    if already_open {
+        // Page is loaded; eval the capture script directly (no view switch).
+        let js = build_favicon_capture_js(&app_id);
+        if let Some(webview) = app_handle.get_webview(&format!("app-{}", app_id)) {
+            let _ = webview.eval(&js);
+        } else {
+            // Raced with a close — clean up and bail.
+            let mut pending = state.pending_icon_captures.lock().map_err(|e| e.to_string())?;
+            pending.remove(&app_id);
+            return Err("App webview is not available".to_string());
+        }
+    } else {
+        // Create + load the webview. Its on_page_load(Finished) hook injects
+        // the capture script (pending entry is already set above).
+        crate::commands::webviews::ensure_app_open(&app_handle, &space_id, &app_id, state.clone())?;
+    }
+
+    // Await the captured URLs (or time out).
+    let urls = tokio::select! {
+        result = rx => result.map_err(|_| "Capture cancelled before completion".to_string())?,
+        _ = tokio::time::sleep(Duration::from_secs(25)) => {
+            {
+                let mut pending = state.pending_icon_captures.lock().map_err(|e| e.to_string())?;
+                pending.remove(&app_id);
+            }
+            // Best-effort: restore the previous view before reporting failure.
+            let _ = restore_previous(&app_handle, &space_id, &app_id, &prev_active);
+            return Err("Timed out waiting for the app page to load".to_string());
+        }
+    };
+
+    // Clean up the pending entry (capture_favicon_done already removed it, but
+    // guard against a path where it didn't).
+    {
+        let mut pending = state.pending_icon_captures.lock().map_err(|e| e.to_string())?;
+        pending.remove(&app_id);
+    }
+
+    // Download the first working URL (same priority/fallbacks as fetch_site_info).
+    let client = http_client()?;
+    let icon_path = download_first_favicon(&client, &urls, &app_url, &app_name).await;
+    if icon_path == "auto" {
+        // No usable favicon found in the authenticated DOM either.
+        let _ = restore_previous(&app_handle, &space_id, &app_id, &prev_active);
+        return Err("No favicon found on the authenticated page".to_string());
+    }
+
+    let _ = restore_previous(&app_handle, &space_id, &app_id, &prev_active);
+    Ok(icon_path)
+}
+
+/// Restore the previously-active app's view after an auto-open refetch.
+/// Derives `State` from `app_handle` (via `Manager::state`) so it needs no
+/// borrowed `State` argument.
+fn restore_previous(
+    app_handle: &AppHandle,
+    space_id: &str,
+    refetched_app_id: &str,
+    prev_active: &Option<String>,
+) -> Result<(), String> {
+    if let Some(prev) = prev_active.as_deref() {
+        if prev != refetched_app_id {
+            let state = app_handle.state::<AppState>();
+            let prev_still_open = {
+                let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
+                labels.contains_key(prev)
+            };
+            if prev_still_open {
+                // switch_to_app ignores its space_id arg, so passing the
+                // refetched app's space is harmless.
+                crate::commands::webviews::switch_to_app(
+                    app_handle.clone(),
+                    space_id.to_string(),
+                    prev.to_string(),
+                    state,
+                )?;
+            }
+        }
     }
     Ok(())
 }
