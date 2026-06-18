@@ -254,9 +254,9 @@ mod capture_tests {
     #[test]
     fn prioritizes_apple_touch_and_larger_sizes() {
         let js = build_favicon_capture_js("app-1");
-        // apple-touch-icon gets the top priority.
+        // apple-touch-icon gets the top priority (value 10).
         assert!(js.contains("apple-touch-icon"));
-        assert!(js.contains("priority = 10"));
+        assert!(js.contains("return 10"));
         // Sorts candidates by priority descending.
         assert!(js.contains("sort"));
     }
