@@ -489,19 +489,16 @@ pub async fn refetch_app_icon(
         (url, name, active)
     };
 
-    // Refuse a double-refetch for the same app (would orphan the first awaiter).
-    {
-        let pending = state.pending_icon_captures.lock().map_err(|e| e.to_string())?;
-        if pending.contains_key(&app_id) {
-            return Err("An icon refetch is already in progress for this app".to_string());
-        }
-    }
-
     // Register the oneshot BEFORE opening / eval'ing, so the on_page_load hook
-    // and the direct eval both see a pending entry.
+    // and the direct eval both see a pending entry. Check + insert atomically
+    // (a TOCTOU gap here would let two concurrent refetches both pass and the
+    // second would orphan the first's oneshot awaiter).
     let (tx, rx) = tokio::sync::oneshot::channel::<Vec<String>>();
     {
         let mut pending = state.pending_icon_captures.lock().map_err(|e| e.to_string())?;
+        if pending.contains_key(&app_id) {
+            return Err("An icon refetch is already in progress for this app".to_string());
+        }
         pending.insert(app_id.clone(), tx);
     }
 
@@ -514,6 +511,12 @@ pub async fn refetch_app_icon(
         // Page is loaded; eval the capture script directly (no view switch).
         let js = build_favicon_capture_js(&app_id);
         if let Some(webview) = app_handle.get_webview(&format!("app-{}", app_id)) {
+            // Reset the idempotency guard so a repeat refetch on this loaded
+            // SPA re-runs capture (the guard persists for the document's
+            // lifetime; without this, a second refetch silently no-ops and
+            // times out). Safe here: the direct path only runs when the page
+            // is already loaded, so no concurrent on_page_load injection races.
+            let _ = webview.eval("window.__webapps_icon_captured = false;");
             let _ = webview.eval(&js);
         } else {
             // Raced with a close — clean up and bail.
@@ -537,7 +540,7 @@ pub async fn refetch_app_icon(
             }
             // Best-effort: restore the previous view before reporting failure.
             let _ = restore_previous(&app_handle, &space_id, &app_id, &prev_active);
-            return Err("Timed out waiting for the app page to load".to_string());
+            return Err("Timed out capturing the favicon".to_string());
         }
     };
 
@@ -548,16 +551,19 @@ pub async fn refetch_app_icon(
         pending.remove(&app_id);
     }
 
+    // Restore the previous view now that capture is done — the favicon download
+    // doesn't need the refetched app visible, so don't keep the view hijacked
+    // through the (potentially multi-second) download.
+    let _ = restore_previous(&app_handle, &space_id, &app_id, &prev_active);
+
     // Download the first working URL (same priority/fallbacks as fetch_site_info).
     let client = http_client()?;
     let icon_path = download_first_favicon(&client, &urls, &app_url, &app_name).await;
     if icon_path == "auto" {
         // No usable favicon found in the authenticated DOM either.
-        let _ = restore_previous(&app_handle, &space_id, &app_id, &prev_active);
         return Err("No favicon found on the authenticated page".to_string());
     }
 
-    let _ = restore_previous(&app_handle, &space_id, &app_id, &prev_active);
     Ok(icon_path)
 }
 
