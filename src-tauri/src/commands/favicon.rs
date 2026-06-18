@@ -41,32 +41,52 @@ pub async fn fetch_site_info(url: String) -> Result<(String, String), String> {
     Ok((title, icon_path))
 }
 
-/// Try multiple strategies to get a favicon, returning the local path or "auto"
+/// Try multiple strategies to get a favicon, returning the local path or "auto".
 async fn try_download_favicon(
     client: &reqwest::Client,
     html: &str,
     page_url: &str,
     title: &str,
 ) -> String {
-    // Strategy 1: Extract from HTML <link> tags (try all matches)
+    // Strategy 1: Extract candidate URLs from the page's HTML.
     let favicon_urls = extract_favicon_urls(html, page_url);
-    for favicon_url in &favicon_urls {
+    download_first_favicon(client, &favicon_urls, page_url, title).await
+}
+
+/// Download the first working favicon from a prioritized URL list, then fall
+/// back to the root `/favicon.ico` and Google's favicon service.
+///
+/// `urls` are strategy-1 candidates (highest priority first). `page_url` is the
+/// page the icons belong to, used to build the fallback URLs. Returns a local
+/// file path on success or `"auto"` if every strategy fails.
+async fn download_first_favicon(
+    client: &reqwest::Client,
+    urls: &[String],
+    page_url: &str,
+    title: &str,
+) -> String {
+    // Strategy 1: try each provided candidate URL in priority order.
+    for favicon_url in urls {
         if let Ok(path) = download_favicon(client, favicon_url, title).await {
             return path;
         }
     }
 
-    // Strategy 2: Try /favicon.ico at the root
+    // Strategy 2: Try /favicon.ico at the root (skip if already in the list).
     if let Ok(parsed) = url::Url::parse(page_url) {
-        let root_favicon = format!("{}://{}/favicon.ico", parsed.scheme(), parsed.host_str().unwrap_or(""));
-        if !favicon_urls.iter().any(|u| u == &root_favicon) {
+        let root_favicon = format!(
+            "{}://{}/favicon.ico",
+            parsed.scheme(),
+            parsed.host_str().unwrap_or("")
+        );
+        if !urls.iter().any(|u| u == &root_favicon) {
             if let Ok(path) = download_favicon(client, &root_favicon, title).await {
                 return path;
             }
         }
     }
 
-    // Strategy 3: Use Google's favicon service as fallback
+    // Strategy 3: Use Google's favicon service as fallback.
     if let Ok(parsed) = url::Url::parse(page_url) {
         if let Some(domain) = parsed.host_str() {
             let google_url = format!(
