@@ -2,7 +2,7 @@
   import { emit } from "@tauri-apps/api/event";
   import { open } from "@tauri-apps/plugin-dialog";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { addApp, editApp, fetchSiteInfo, closeDialog } from "../api";
+  import { addApp, editApp, fetchSiteInfo, refetchAppIcon, closeDialog } from "../api";
   import { autofocus } from "../actions";
 
   let { mode, spaceId, appId, initialName, initialUrl, initialIcon }: {
@@ -72,8 +72,16 @@
     if (!url.trim()) return;
     loading = true;
     try {
-      const [, fetchedIcon] = await fetchSiteInfo(url.trim());
-      icon = fetchedIcon;
+      if (mode === "edit" && appId) {
+        // Capture the favicon from the live (authenticated) webview, auto-
+        // opening the app if needed. Returns the new local icon path.
+        const fetchedIcon = await refetchAppIcon(spaceId, appId);
+        icon = fetchedIcon;
+      } else {
+        // Add mode: no app/webview exists yet, so use the generic fetch.
+        const [, fetchedIcon] = await fetchSiteInfo(url.trim());
+        icon = fetchedIcon;
+      }
     } catch {
       // Keep current icon on error
     }
