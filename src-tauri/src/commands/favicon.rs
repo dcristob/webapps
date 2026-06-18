@@ -434,3 +434,138 @@ fn detect_image_format(bytes: &[u8]) -> Option<&'static str> {
 
     None
 }
+
+/// Build the favicon-capture script injected into an app webview during an
+/// icon refetch. Mirrors the priority logic of `extract_favicon_urls`
+/// (`apple-touch-icon` > larger `sizes` > generic icon > `og:image`).
+///
+/// The script waits for the page to finish loading (+800 ms debounce so
+/// SPA-injected favicons settle), collects the prioritized favicon URLs from
+/// the live DOM, and invokes the `capture_favicon_done` Tauri command with the
+/// result. An idempotency guard prevents a second capture if injected twice.
+pub fn build_favicon_capture_js(app_id: &str) -> String {
+    let app_id_literal = serde_json::to_string(app_id).unwrap_or_else(|_| "\"\"".to_string());
+    format!(
+        r#"
+(function() {{
+  if (window.__webapps_icon_captured) return;
+  var APP_ID = {app_id_literal};
+
+  function priorityFor(el) {{
+    var rel = (el.getAttribute('rel') || '').toLowerCase();
+    if (rel.indexOf('apple-touch-icon') !== -1) return 10;
+    var sizes = (el.getAttribute('sizes') || '').toLowerCase();
+    if (sizes === 'any') return 8; // SVG / scalable, very good
+    var m = sizes.match(/(\d+)x\d+/);
+    if (m) {{
+      var n = parseInt(m[1], 10);
+      return n >= 128 ? 7 : n >= 64 ? 5 : n >= 32 ? 3 : 1;
+    }}
+    return 0;
+  }}
+
+  function resolve(href, base) {{
+    try {{ return new URL(href, base).href; }}
+    catch (e) {{ return null; }}
+  }}
+
+  function run() {{
+    if (window.__webapps_icon_captured) return;
+    window.__webapps_icon_captured = true;
+
+    var base = window.location.href;
+    var results = [];
+    var links = document.querySelectorAll('link[rel]');
+    links.forEach(function(el) {{
+      var rel = (el.getAttribute('rel') || '').toLowerCase();
+      if (rel.indexOf('icon') === -1) return; // mirrors Rust rel.contains("icon")
+      var href = el.getAttribute('href');
+      if (!href) return;
+      var resolved = resolve(href, base);
+      if (resolved) results.push({{ p: priorityFor(el), u: resolved }});
+    }});
+
+    // og:image as a last-resort candidate.
+    var og = document.querySelector('meta[property="og:image"]');
+    if (og) {{
+      var content = og.getAttribute('content');
+      if (content) {{
+        var resolved = resolve(content, base);
+        if (resolved) results.push({{ p: -1, u: resolved }});
+      }}
+    }}
+
+    // Highest priority first.
+    results.sort(function(a, b) {{ return b.p - a.p; }});
+    var urls = results.map(function(r) {{ return r.u; }});
+
+    if (window.__TAURI_INTERNALS__) {{
+      try {{
+        window.__TAURI_INTERNALS__.invoke('capture_favicon_done', {{ appId: APP_ID, urls: urls }});
+      }} catch (e) {{}}
+    }}
+  }}
+
+  if (document.readyState === 'complete') {{
+    setTimeout(run, 800);
+  }} else {{
+    window.addEventListener('load', function() {{ setTimeout(run, 800); }});
+  }}
+}})();
+"#
+    )
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::build_favicon_capture_js;
+
+    #[test]
+    fn bakes_in_app_id_as_quoted_literal() {
+        let js = build_favicon_capture_js("app-123");
+        // The app id is embedded as a JS string literal.
+        assert!(js.contains(r#"var APP_ID = "app-123";"#));
+    }
+
+    #[test]
+    fn invokes_capture_favicon_done_command() {
+        let js = build_favicon_capture_js("app-1");
+        assert!(js.contains("capture_favicon_done"));
+        assert!(js.contains("appId"));
+        assert!(js.contains("urls"));
+    }
+
+    #[test]
+    fn has_idempotency_guard() {
+        let js = build_favicon_capture_js("app-1");
+        // Prevents double-capture if injected twice (e.g. once by refetch's
+        // direct eval and once by the on_page_load hook).
+        assert!(js.contains("__webapps_icon_captured"));
+    }
+
+    #[test]
+    fn waits_for_load_with_debounce() {
+        let js = build_favicon_capture_js("app-1");
+        // Waits for document.readyState === 'complete', then debounces so
+        // SPA-set favicons (e.g. Google's client-side <link> injection) settle.
+        assert!(js.contains("readyState"));
+        assert!(js.contains("800"));
+    }
+
+    #[test]
+    fn prioritizes_apple_touch_and_larger_sizes() {
+        let js = build_favicon_capture_js("app-1");
+        // apple-touch-icon gets the top priority.
+        assert!(js.contains("apple-touch-icon"));
+        assert!(js.contains("return 10"));
+        // Sorts candidates by priority descending.
+        assert!(js.contains("sort"));
+    }
+
+    #[test]
+    fn resolves_relative_urls_and_includes_og_image() {
+        let js = build_favicon_capture_js("app-1");
+        assert!(js.contains("new URL("));
+        assert!(js.contains("og:image"));
+    }
+}
