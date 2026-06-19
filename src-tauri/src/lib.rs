@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod render_mode;
 mod state;
 
 use config::models::*;
@@ -43,6 +44,11 @@ fn apply_cosmic_theme() {
 pub fn run() {
     storage::ensure_dirs().expect("Failed to create config directories");
 
+    // Configure the WebKitGTK DMA-BUF renderer before any GTK/WebKit init.
+    // Self-heals on systems where the GPU renderer crashes at startup.
+    #[cfg(target_os = "linux")]
+    render_mode::configure_for_launch();
+
     let mut spaces = storage::list_spaces().unwrap_or_default();
     if spaces.is_empty() {
         let general = SpaceConfig {
@@ -75,6 +81,7 @@ pub fn run() {
             space_context_menu_target: Mutex::new(None),
             last_active: Mutex::new(HashMap::new()),
             slept_apps: Mutex::new(std::collections::HashSet::new()),
+            pending_icon_captures: Mutex::new(HashMap::new()),
             #[cfg(target_os = "linux")]
             pending_media_requests: Mutex::new(HashMap::new()),
             active_captures: Mutex::new(HashMap::new()),
@@ -223,6 +230,18 @@ pub fn run() {
                 }
             });
 
+            // Confirm startup survived so future launches know the DMA-BUF
+            // renderer is safe on this system. A startup GPU crash kills the
+            // process well within this delay, so a stale "probing" marker is
+            // left for the next launch to self-heal from.
+            #[cfg(target_os = "linux")]
+            {
+                std::thread::spawn(|| {
+                    std::thread::sleep(Duration::from_secs(2));
+                    render_mode::confirm_started_ok();
+                });
+            }
+
             Ok(())
         })
         .on_menu_event(|app_handle, event| {
@@ -316,6 +335,8 @@ pub fn run() {
             commands::webviews::open_blank_popup,
             commands::webviews::eval_in_app,
             commands::favicon::fetch_site_info,
+            commands::favicon::capture_favicon_done,
+            commands::favicon::refetch_app_icon,
             commands::dialog::show_dialog,
             commands::dialog::close_dialog,
             commands::permissions::set_app_permission,

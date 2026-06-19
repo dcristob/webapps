@@ -1,8 +1,12 @@
 use std::fs;
 
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
+use tauri::State;
 
 use crate::config::storage;
+use crate::state::AppState;
+use std::time::Duration;
+use tauri::{AppHandle, Manager};
 
 /// Build a reqwest client with a browser-like User-Agent
 fn http_client() -> Result<reqwest::Client, String> {
@@ -41,32 +45,52 @@ pub async fn fetch_site_info(url: String) -> Result<(String, String), String> {
     Ok((title, icon_path))
 }
 
-/// Try multiple strategies to get a favicon, returning the local path or "auto"
+/// Try multiple strategies to get a favicon, returning the local path or "auto".
 async fn try_download_favicon(
     client: &reqwest::Client,
     html: &str,
     page_url: &str,
     title: &str,
 ) -> String {
-    // Strategy 1: Extract from HTML <link> tags (try all matches)
+    // Strategy 1: Extract candidate URLs from the page's HTML.
     let favicon_urls = extract_favicon_urls(html, page_url);
-    for favicon_url in &favicon_urls {
+    download_first_favicon(client, &favicon_urls, page_url, title).await
+}
+
+/// Download the first working favicon from a prioritized URL list, then fall
+/// back to the root `/favicon.ico` and Google's favicon service.
+///
+/// `urls` are strategy-1 candidates (highest priority first). `page_url` is the
+/// page the icons belong to, used to build the fallback URLs. Returns a local
+/// file path on success or `"auto"` if every strategy fails.
+async fn download_first_favicon(
+    client: &reqwest::Client,
+    urls: &[String],
+    page_url: &str,
+    title: &str,
+) -> String {
+    // Strategy 1: try each provided candidate URL in priority order.
+    for favicon_url in urls {
         if let Ok(path) = download_favicon(client, favicon_url, title).await {
             return path;
         }
     }
 
-    // Strategy 2: Try /favicon.ico at the root
+    // Strategy 2: Try /favicon.ico at the root (skip if already in the list).
     if let Ok(parsed) = url::Url::parse(page_url) {
-        let root_favicon = format!("{}://{}/favicon.ico", parsed.scheme(), parsed.host_str().unwrap_or(""));
-        if !favicon_urls.iter().any(|u| u == &root_favicon) {
+        let root_favicon = format!(
+            "{}://{}/favicon.ico",
+            parsed.scheme(),
+            parsed.host_str().unwrap_or("")
+        );
+        if !urls.iter().any(|u| u == &root_favicon) {
             if let Ok(path) = download_favicon(client, &root_favicon, title).await {
                 return path;
             }
         }
     }
 
-    // Strategy 3: Use Google's favicon service as fallback
+    // Strategy 3: Use Google's favicon service as fallback.
     if let Ok(parsed) = url::Url::parse(page_url) {
         if let Some(domain) = parsed.host_str() {
             let google_url = format!(
@@ -413,4 +437,298 @@ fn detect_image_format(bytes: &[u8]) -> Option<&'static str> {
     }
 
     None
+}
+
+/// Receiver half of the icon-capture bridge. Called from JS (via
+/// `__TAURI_INTERNALS__.invoke`) once `build_favicon_capture_js` has collected
+/// the favicon URLs from the live webview DOM. Resolves the oneshot that
+/// `refetch_app_icon` is awaiting. No-op if no capture is pending for this app
+/// (e.g. a stale injection arriving after `refetch_app_icon` timed out).
+#[tauri::command]
+pub fn capture_favicon_done(app_id: String, urls: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
+    let mut pending = state.pending_icon_captures.lock().map_err(|e| e.to_string())?;
+    if let Some(sender) = pending.remove(&app_id) {
+        // Receiver may have been dropped on timeout; ignore send errors.
+        let _ = sender.send(urls);
+    }
+    Ok(())
+}
+
+/// Capture the favicon from an app's live (authenticated) webview.
+///
+/// If the webview is already open, the capture script is eval'd directly
+/// against the loaded page. Otherwise the webview is created via
+/// `ensure_app_open` (its persisted cookies load the authenticated page),
+/// and the `on_page_load(Finished)` hook injects the capture script on first
+/// load. The script reports the DOM's favicon URLs back via
+/// `capture_favicon_done`; this command awaits that with a 25 s timeout, then
+/// downloads the first working URL. The previously-active app is restored
+/// afterwards so the user's view isn't hijacked by the auto-open.
+///
+/// Returns the new local icon path. Does NOT persist it to the app config —
+/// the frontend's Save action does that via `edit_app`, consistent with other
+/// edits.
+#[tauri::command]
+pub async fn refetch_app_icon(
+    app_handle: AppHandle,
+    space_id: String,
+    app_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    // Resolve the target app + remember the currently-active app to restore later.
+    let (app_url, app_name, prev_active) = {
+        let spaces = state.spaces.lock().map_err(|e| e.to_string())?;
+        let app = spaces
+            .iter()
+            .flat_map(|s| s.apps.iter())
+            .find(|a| a.id == app_id)
+            .ok_or_else(|| format!("App '{}' not found", app_id))?;
+        let url = app.url.clone();
+        let name = app.name.clone();
+        let active = state.active_app_id.lock().map_err(|e| e.to_string())?.clone();
+        (url, name, active)
+    };
+
+    // Register the oneshot BEFORE opening / eval'ing, so the on_page_load hook
+    // and the direct eval both see a pending entry. Check + insert atomically
+    // (a TOCTOU gap here would let two concurrent refetches both pass and the
+    // second would orphan the first's oneshot awaiter).
+    let (tx, rx) = tokio::sync::oneshot::channel::<Vec<String>>();
+    {
+        let mut pending = state.pending_icon_captures.lock().map_err(|e| e.to_string())?;
+        if pending.contains_key(&app_id) {
+            return Err("An icon refetch is already in progress for this app".to_string());
+        }
+        pending.insert(app_id.clone(), tx);
+    }
+
+    // Decide injection path based on whether the webview already exists.
+    let already_open = {
+        let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
+        labels.contains_key(&app_id)
+    };
+    if already_open {
+        // Page is loaded; eval the capture script directly (no view switch).
+        let js = build_favicon_capture_js(&app_id);
+        if let Some(webview) = app_handle.get_webview(&format!("app-{}", app_id)) {
+            // Reset the idempotency guard so a repeat refetch on this loaded
+            // SPA re-runs capture (the guard persists for the document's
+            // lifetime; without this, a second refetch silently no-ops and
+            // times out). Safe here: the direct path only runs when the page
+            // is already loaded, so no concurrent on_page_load injection races.
+            let _ = webview.eval("window.__webapps_icon_captured = false;");
+            let _ = webview.eval(&js);
+        } else {
+            // Raced with a close — clean up and bail.
+            let mut pending = state.pending_icon_captures.lock().map_err(|e| e.to_string())?;
+            pending.remove(&app_id);
+            return Err("App webview is not available".to_string());
+        }
+    } else {
+        // Create + load the webview. Its on_page_load(Finished) hook injects
+        // the capture script (pending entry is already set above).
+        crate::commands::webviews::ensure_app_open(&app_handle, &space_id, &app_id, state.clone())?;
+    }
+
+    // Await the captured URLs (or time out).
+    let urls = tokio::select! {
+        result = rx => result.map_err(|_| "Capture cancelled before completion".to_string())?,
+        _ = tokio::time::sleep(Duration::from_secs(25)) => {
+            {
+                let mut pending = state.pending_icon_captures.lock().map_err(|e| e.to_string())?;
+                pending.remove(&app_id);
+            }
+            // Best-effort: restore the previous view before reporting failure.
+            let _ = restore_previous(&app_handle, &space_id, &app_id, &prev_active);
+            return Err("Timed out capturing the favicon".to_string());
+        }
+    };
+
+    // Clean up the pending entry (capture_favicon_done already removed it, but
+    // guard against a path where it didn't).
+    {
+        let mut pending = state.pending_icon_captures.lock().map_err(|e| e.to_string())?;
+        pending.remove(&app_id);
+    }
+
+    // Restore the previous view now that capture is done — the favicon download
+    // doesn't need the refetched app visible, so don't keep the view hijacked
+    // through the (potentially multi-second) download.
+    let _ = restore_previous(&app_handle, &space_id, &app_id, &prev_active);
+
+    // Download the first working URL (same priority/fallbacks as fetch_site_info).
+    let client = http_client()?;
+    let icon_path = download_first_favicon(&client, &urls, &app_url, &app_name).await;
+    if icon_path == "auto" {
+        // No usable favicon found in the authenticated DOM either.
+        return Err("No favicon found on the authenticated page".to_string());
+    }
+
+    Ok(icon_path)
+}
+
+/// Restore the previously-active app's view after an auto-open refetch.
+/// Derives `State` from `app_handle` (via `Manager::state`) so it needs no
+/// borrowed `State` argument.
+fn restore_previous(
+    app_handle: &AppHandle,
+    space_id: &str,
+    refetched_app_id: &str,
+    prev_active: &Option<String>,
+) -> Result<(), String> {
+    if let Some(prev) = prev_active.as_deref() {
+        if prev != refetched_app_id {
+            let state = app_handle.state::<AppState>();
+            let prev_still_open = {
+                let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
+                labels.contains_key(prev)
+            };
+            if prev_still_open {
+                // switch_to_app ignores its space_id arg, so passing the
+                // refetched app's space is harmless.
+                crate::commands::webviews::switch_to_app(
+                    app_handle.clone(),
+                    space_id.to_string(),
+                    prev.to_string(),
+                    state,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Build the favicon-capture script injected into an app webview during an
+/// icon refetch. Mirrors the priority logic of `extract_favicon_urls`
+/// (`apple-touch-icon` > larger `sizes` > generic icon > `og:image`).
+///
+/// The script waits for the page to finish loading (+800 ms debounce so
+/// SPA-injected favicons settle), collects the prioritized favicon URLs from
+/// the live DOM, and invokes the `capture_favicon_done` Tauri command with the
+/// result. An idempotency guard prevents a second capture if injected twice.
+pub fn build_favicon_capture_js(app_id: &str) -> String {
+    let app_id_literal = serde_json::to_string(app_id).unwrap_or_else(|_| "\"\"".to_string());
+    format!(
+        r#"
+(function() {{
+  if (window.__webapps_icon_captured) return;
+  var APP_ID = {app_id_literal};
+
+  function priorityFor(el) {{
+    var rel = (el.getAttribute('rel') || '').toLowerCase();
+    if (rel.indexOf('apple-touch-icon') !== -1) return 10;
+    var sizes = (el.getAttribute('sizes') || '').toLowerCase();
+    if (sizes === 'any') return 8; // SVG / scalable, very good
+    var m = sizes.match(/(\d+)x\d+/);
+    if (m) {{
+      var n = parseInt(m[1], 10);
+      return n >= 128 ? 7 : n >= 64 ? 5 : n >= 32 ? 3 : 1;
+    }}
+    return 0;
+  }}
+
+  function resolve(href, base) {{
+    try {{ return new URL(href, base).href; }}
+    catch (e) {{ return null; }}
+  }}
+
+  function run() {{
+    if (window.__webapps_icon_captured) return;
+    window.__webapps_icon_captured = true;
+
+    var base = window.location.href;
+    var results = [];
+    var links = document.querySelectorAll('link[rel]');
+    links.forEach(function(el) {{
+      var rel = (el.getAttribute('rel') || '').toLowerCase();
+      if (rel.indexOf('icon') === -1) return; // mirrors Rust rel.contains("icon")
+      var href = el.getAttribute('href');
+      if (!href) return;
+      var resolved = resolve(href, base);
+      if (resolved) results.push({{ p: priorityFor(el), u: resolved }});
+    }});
+
+    // og:image as a last-resort candidate.
+    var og = document.querySelector('meta[property="og:image"]');
+    if (og) {{
+      var content = og.getAttribute('content');
+      if (content) {{
+        var resolved = resolve(content, base);
+        if (resolved) results.push({{ p: -1, u: resolved }});
+      }}
+    }}
+
+    // Highest priority first.
+    results.sort(function(a, b) {{ return b.p - a.p; }});
+    var urls = results.map(function(r) {{ return r.u; }});
+
+    if (window.__TAURI_INTERNALS__) {{
+      try {{
+        window.__TAURI_INTERNALS__.invoke('capture_favicon_done', {{ appId: APP_ID, urls: urls }});
+      }} catch (e) {{}}
+    }}
+  }}
+
+  if (document.readyState === 'complete') {{
+    setTimeout(run, 800);
+  }} else {{
+    window.addEventListener('load', function() {{ setTimeout(run, 800); }});
+  }}
+}})();
+"#
+    )
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::build_favicon_capture_js;
+
+    #[test]
+    fn bakes_in_app_id_as_quoted_literal() {
+        let js = build_favicon_capture_js("app-123");
+        // The app id is embedded as a JS string literal.
+        assert!(js.contains(r#"var APP_ID = "app-123";"#));
+    }
+
+    #[test]
+    fn invokes_capture_favicon_done_command() {
+        let js = build_favicon_capture_js("app-1");
+        assert!(js.contains("capture_favicon_done"));
+        assert!(js.contains("appId"));
+        assert!(js.contains("urls"));
+    }
+
+    #[test]
+    fn has_idempotency_guard() {
+        let js = build_favicon_capture_js("app-1");
+        // Prevents double-capture if injected twice (e.g. once by refetch's
+        // direct eval and once by the on_page_load hook).
+        assert!(js.contains("__webapps_icon_captured"));
+    }
+
+    #[test]
+    fn waits_for_load_with_debounce() {
+        let js = build_favicon_capture_js("app-1");
+        // Waits for document.readyState === 'complete', then debounces so
+        // SPA-set favicons (e.g. Google's client-side <link> injection) settle.
+        assert!(js.contains("readyState"));
+        assert!(js.contains("800"));
+    }
+
+    #[test]
+    fn prioritizes_apple_touch_and_larger_sizes() {
+        let js = build_favicon_capture_js("app-1");
+        // apple-touch-icon gets the top priority.
+        assert!(js.contains("apple-touch-icon"));
+        assert!(js.contains("return 10"));
+        // Sorts candidates by priority descending.
+        assert!(js.contains("sort"));
+    }
+
+    #[test]
+    fn resolves_relative_urls_and_includes_og_image() {
+        let js = build_favicon_capture_js("app-1");
+        assert!(js.contains("new URL("));
+        assert!(js.contains("og:image"));
+    }
 }

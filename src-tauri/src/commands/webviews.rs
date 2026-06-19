@@ -11,6 +11,7 @@ static POPUP_COUNTER: AtomicU32 = AtomicU32::new(0);
 use crate::config::models::*;
 use crate::config::storage;
 use crate::state::AppState;
+use crate::commands::favicon::build_favicon_capture_js;
 
 const TOPBAR_HEIGHT: f64 = 48.0;
 // NOTE: We present as Safari (real WebKit), NOT a spoofed Chrome. Microsoft
@@ -422,6 +423,36 @@ fn resolve_data_directory(space: &SpaceConfig, app: &AppConfig) -> Result<std::p
 
 #[tauri::command]
 pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    // Wake from sleep if needed
+    {
+        let mut slept = state.slept_apps.lock().map_err(|e| e.to_string())?;
+        slept.remove(&app_id);
+    }
+
+    // Fast path: if the webview already exists, just switch to it.
+    {
+        let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
+        if labels.contains_key(&app_id) {
+            drop(labels);
+            return switch_to_app(app_handle, space_id, app_id, state);
+        }
+    }
+
+    // Create the webview (loads the URL, sets it active, emits app-woke).
+    ensure_app_open(&app_handle, &space_id, &app_id, state)
+}
+
+/// Create and register an app webview. Assumes the webview does NOT already
+/// exist (the caller — `open_app` or `refetch_app_icon` — handles the
+/// already-open fast path). Performs the full create flow: resolves the data
+/// directory, builds the webview with all injected scripts and signal hooks,
+/// reparents on Linux, sets it active, and emits `app-woke`.
+pub fn ensure_app_open(
+    app_handle: &AppHandle,
+    space_id: &str,
+    app_id: &str,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     // Extract needed data from the spaces lock, then drop it
     let (space_clone, app_clone) = {
         let spaces = state.spaces.lock().map_err(|e| e.to_string())?;
@@ -433,21 +464,6 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
     };
 
     let label = format!("app-{}", app_clone.id);
-
-    // Wake from sleep if needed
-    {
-        let mut slept = state.slept_apps.lock().map_err(|e| e.to_string())?;
-        slept.remove(&app_clone.id);
-    }
-
-    // Check if webview already exists; if so, just switch to it
-    {
-        let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
-        if labels.contains_key(&app_clone.id) {
-            drop(labels);
-            return switch_to_app(app_handle, space_id, app_id, state);
-        }
-    }
 
     let data_dir = resolve_data_directory(&space_clone, &app_clone)?;
     fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
@@ -478,6 +494,9 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
 
     let app_id_for_title = app_clone.id.clone();
     let app_handle_for_title = app_handle.clone();
+
+    let app_id_for_capture = app_clone.id.clone();
+    let app_handle_for_capture = app_handle.clone();
 
     let label_for_nav = label.clone();
     let app_handle_for_nav = app_handle.clone();
@@ -604,6 +623,16 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
             }
             if payload.event() == tauri::webview::PageLoadEvent::Finished {
                 let _ = webview.eval(&link_interceptor_js);
+                // If an icon refetch is pending for this app, inject the
+                // capture script (it waits for load + debounce, then reports
+                // the authenticated DOM's favicon URLs back to Rust).
+                let state = app_handle_for_capture.state::<AppState>();
+                let guard = state.pending_icon_captures.lock();
+                if let Ok(guard) = guard {
+                    if guard.contains_key(&app_id_for_capture) {
+                        let _ = webview.eval(&build_favicon_capture_js(&app_id_for_capture));
+                    }
+                }
             }
         });
 
@@ -619,7 +648,7 @@ pub fn open_app(app_handle: AppHandle, space_id: String, app_id: String, state: 
     #[cfg(target_os = "linux")]
     {
         let app_handle_for_perm = app_handle.clone();
-        let space_id_for_perm = space_id.clone();
+        let space_id_for_perm = space_id.to_string();
         let app_id_for_perm = app_clone.id.clone();
         if let Some(webview) = app_handle.get_webview(&label) {
             let _ = webview.with_webview(move |platform_webview| {

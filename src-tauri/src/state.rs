@@ -21,6 +21,9 @@ pub struct AppState {
     pub last_active: Mutex<HashMap<String, Instant>>,
     /// Apps whose webviews were destroyed to save memory but are still "open" in the sidebar.
     pub slept_apps: Mutex<HashSet<String>>,
+    /// Map of app_id -> oneshot sender awaiting the favicon URL list captured
+    /// from that app's live webview by `refetch_app_icon` / `capture_favicon_done`.
+    pub pending_icon_captures: Mutex<HashMap<String, tokio::sync::oneshot::Sender<Vec<String>>>>,
 
     /// Map of app_id -> pending WebKit media permission request waiting for the user.
     /// `wants_camera` / `wants_microphone` flags say which devices the page asked for.

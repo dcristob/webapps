@@ -107,6 +107,10 @@ export async function fetchSiteInfo(url: string): Promise<[string, string]> {
   return invoke("fetch_site_info", { url });
 }
 
+export async function refetchAppIcon(spaceId: string, appId: string): Promise<string> {
+  return invoke("refetch_app_icon", { spaceId, appId });
+}
+
 // Dialog
 export async function showDialog(dialogType: string, spaceId?: string, params?: Record<string, string>): Promise<void> {
   return invoke("show_dialog", { dialogType, spaceId: spaceId ?? null, params: params ?? null });

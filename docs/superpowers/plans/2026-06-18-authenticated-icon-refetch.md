@@ -254,9 +254,9 @@ mod capture_tests {
     #[test]
     fn prioritizes_apple_touch_and_larger_sizes() {
         let js = build_favicon_capture_js("app-1");
-        // apple-touch-icon gets the top priority.
+        // apple-touch-icon gets the top priority (value 10).
         assert!(js.contains("apple-touch-icon"));
-        assert!(js.contains("priority = 10"));
+        assert!(js.contains("return 10"));
         // Sorts candidates by priority descending.
         assert!(js.contains("sort"));
     }
@@ -968,17 +968,22 @@ Expected: after a few seconds the icon preview updates to the dedicated icon (Gm
 Close the app's webview (or sleep it), so it is no longer loaded. With a *different* app currently active, open the target app's Edit dialog → **Re-fetch**.
 Expected: the target app's webview auto-opens (briefly becomes active), captures the icon, then the view returns to the previously-active app. The Edit dialog preview shows the dedicated icon.
 
-- [ ] **Step 5: Timeout / error handling**
+- [ ] **Step 5: Repeat refetch on an open app**
+
+With the target app already open and loaded, open its Edit dialog and click **Re-fetch** twice in a row (let the first finish, then click again).
+Expected: the second refetch also succeeds within a few seconds (does NOT time out). Confirms the capture idempotency guard is reset for repeat refetches on a loaded SPA.
+
+- [ ] **Step 6: Timeout / error handling**
 
 Disconnect network, then Edit → **Re-fetch** on an app.
 Expected: after ~25 s (or sooner if the webview fails to load), the Re-fetch resolves, the icon is unchanged, and no crash occurs. (If a toast UI exists, it surfaces the error; otherwise the silent "keep current icon" fallback applies.)
 
-- [ ] **Step 6: Add-mode Re-fetch still uses the generic fetch**
+- [ ] **Step 7: Add-mode Re-fetch still uses the generic fetch**
 
 Add a *new* app (add dialog), click **Fetch**, then click **Re-fetch**.
 Expected: both use the generic `fetchSiteInfo` (no auto-open / no error), since no app/webview exists yet.
 
-- [ ] **Step 7: No final commit needed**
+- [ ] **Step 8: No final commit needed**
 
 This task is verification only. If all steps pass, the feature is complete. Update the local install per `CLAUDE.md` if desired:
 ```bash
