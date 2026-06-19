@@ -59,6 +59,37 @@ npm run tauri build
 
 Configuration is stored in `~/.config/webapps/` in TOML format.
 
+## Troubleshooting
+
+### The app crashes on startup (Linux)
+
+On some Mesa/GPU/Wayland combinations, WebKitGTK's DMA-BUF GPU renderer fails
+to allocate buffers at startup — you'll see `Failed to create GBM buffer` and/or
+`Error 71 (Protocol error) dispatching to Wayland display`, and the window dies
+immediately.
+
+WebApps handles this automatically: it tries the DMA-BUF renderer first, and if
+a launch crashes during startup it disables the renderer for subsequent launches
+(falling back to CPU/shared-memory rendering). So if it crashes once on first
+run, **just launch it again** — it will recover and remember the working setting.
+
+The setting is stored in `~/.config/webapps/dmabuf-mode`. To force a re-probe
+(for example after a driver update), delete that file:
+
+```bash
+rm ~/.config/webapps/dmabuf-mode
+```
+
+You can also override the detection manually with an environment variable:
+
+```bash
+# Force the DMA-BUF renderer off for this launch (GPU accel disabled):
+WEBAPPS_DISABLE_DMABUF=1 webapps
+```
+
+Disabling DMA-BUF trades GPU acceleration for stability; for typical web apps
+(Gmail, Outlook, Drive, …) the difference is negligible.
+
 ## Roadmap
 
 - [x] Core app with Spaces and webview management

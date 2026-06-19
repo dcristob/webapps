@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod render_mode;
 mod state;
 
 use config::models::*;
@@ -42,6 +43,11 @@ fn apply_cosmic_theme() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     storage::ensure_dirs().expect("Failed to create config directories");
+
+    // Configure the WebKitGTK DMA-BUF renderer before any GTK/WebKit init.
+    // Self-heals on systems where the GPU renderer crashes at startup.
+    #[cfg(target_os = "linux")]
+    render_mode::configure_for_launch();
 
     let mut spaces = storage::list_spaces().unwrap_or_default();
     if spaces.is_empty() {
@@ -223,6 +229,18 @@ pub fn run() {
                     }
                 }
             });
+
+            // Confirm startup survived so future launches know the DMA-BUF
+            // renderer is safe on this system. A startup GPU crash kills the
+            // process well within this delay, so a stale "probing" marker is
+            // left for the next launch to self-heal from.
+            #[cfg(target_os = "linux")]
+            {
+                std::thread::spawn(|| {
+                    std::thread::sleep(Duration::from_secs(2));
+                    render_mode::confirm_started_ok();
+                });
+            }
 
             Ok(())
         })
