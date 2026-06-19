@@ -101,7 +101,9 @@ do_install() {
   [[ -f "$BINARY_SRC" ]] || die "Binary not found: $BINARY_SRC (build first?)"
 
   info "Verifying the frontend was embedded..."
-  if ! strings "$BINARY_SRC" | grep -q -o 'assets/index-[A-Za-z0-9_]*\.js'; then
+  # Note: no `grep -q` — it exits on first match, sending SIGPIPE to `strings`,
+  # which `set -o pipefail` would then report as a pipeline failure.
+  if ! strings "$BINARY_SRC" | grep -o 'assets/index-[A-Za-z0-9_]*\.js' >/dev/null; then
     die "Frontend assets not embedded in the binary. Did you build via the Tauri CLI? A bare 'cargo build' will not embed the frontend and the app shows a blank screen."
   fi
   ok "Frontend embedded."
