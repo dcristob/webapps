@@ -98,6 +98,20 @@ binary — there is no package/installer step.
 - **Installed binary:** `~/.local/bin/webapps`
 - **Desktop entry:** `~/.local/share/applications/webapps.desktop`
 
+### Quick install (recommended)
+
+`scripts/install.sh` automates the whole flow below — build, verify the frontend
+was embedded, install the binary, install icons, and write the desktop entry. It
+detects a running instance and offers to kill it first.
+
+```bash
+./scripts/install.sh              # build + install (default)
+./scripts/install.sh --skip-build # install an already-built binary
+./scripts/install.sh --uninstall  # remove binary, icons, desktop entry
+```
+
+The manual steps below document what the script does, for reference.
+
 ### Building a production binary
 
 You MUST build through the Tauri CLI. A bare `cargo build --release` does **not**
@@ -124,8 +138,9 @@ After merging a change to `main`, rebuild and refresh the installed copy:
 
 ```bash
 git checkout main
-npm run tauri -- build --no-bundle
-cp -f src-tauri/target/release/webapps ~/.local/bin/webapps
+./scripts/install.sh   # or, manually:
+# npm run tauri -- build --no-bundle
+# cp -f src-tauri/target/release/webapps ~/.local/bin/webapps
 ```
 
 **Close any running instance before launching the new one.** Two instances
