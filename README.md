@@ -47,6 +47,26 @@ npm run tauri dev
 npm run tauri build
 ```
 
+## Installation (Linux)
+
+`scripts/install.sh` builds WebApps and installs it for the current user: it
+builds via the Tauri CLI, verifies the frontend was embedded, copies the binary
+to `~/.local/bin/webapps`, installs the app icons, and writes a desktop entry
+so WebApps appears in your application launcher.
+
+```bash
+./scripts/install.sh              # build + install (default)
+./scripts/install.sh --skip-build # install an already-built binary
+./scripts/install.sh --uninstall  # remove binary, icons, and desktop entry
+```
+
+The script detects a running WebApps instance and offers to stop it first (two
+instances sharing `~/.config/webapps/` can corrupt each other's WebKit state).
+Uninstalling leaves your config in `~/.config/webapps/` untouched.
+
+If `~/.local/bin` is not on your `PATH`, add it so the `webapps` command and the
+launcher entry resolve.
+
 ## Usage
 
 1. Create a Space from the dropdown menu
