@@ -11,6 +11,7 @@
   onMount(() => {
     const unlisteners = [
       listen("dialog-result", () => loadSpaces()),
+      listen("space-switched", () => loadSpaces()),
       listen("context-menu-edit-space", (e: any) => {
         const { space_id, name, color } = e.payload;
         showDialog("edit-space", space_id, { spaceName: name, spaceColor: color });

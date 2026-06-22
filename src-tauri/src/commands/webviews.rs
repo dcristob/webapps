@@ -877,9 +877,11 @@ pub fn toggle_sidebar_inner(app_handle: &AppHandle, state: &AppState) -> Result<
         *visible
     };
 
-    // Persist (non-fatal: in-memory state is already flipped).
+    // Persist (non-fatal: in-memory state is already flipped). Keep
+    // global_config in sync with the AppState flag so the saved value matches.
     {
-        let cfg = state.global_config.lock().map_err(|e| e.to_string())?;
+        let mut cfg = state.global_config.lock().map_err(|e| e.to_string())?;
+        cfg.general.sidebar_visible = new_visible;
         if let Err(e) = crate::config::storage::save_global_config(&cfg) {
             eprintln!("failed to persist sidebar_visible: {e}");
         }

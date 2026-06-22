@@ -32,20 +32,6 @@ pub fn jump_index(n: usize, len: usize) -> Option<usize> {
     }
 }
 
-/// After removing the app at `removed` from a list of `len_before`, which
-/// surviving index to activate? Prefers the app that was after (it slides into
-/// `removed`'s slot); else the new last; else `None` (was the only app). No wrap.
-pub fn neighbor_index(removed: usize, len_before: usize) -> Option<usize> {
-    if len_before <= 1 {
-        return None;
-    }
-    if removed + 1 < len_before {
-        Some(removed)
-    } else {
-        Some(removed - 1)
-    }
-}
-
 /// JS injected into every app webview. Listens for our shortcut bindings in the
 /// capture phase (so the hosted app never sees them — the shell wins, matching
 /// Slack/Rambox), then forwards the matched action to `handle_shortcut`.
@@ -107,6 +93,18 @@ fn active_space_apps(state: &AppState) -> Result<(String, Vec<String>, Option<St
         space.apps.iter().map(|a| a.id.clone()).collect::<Vec<_>>()
     };
     Ok((active_space_id, app_ids, active_app_id))
+}
+
+/// Pick the app to activate after sleeping `slept_id`: the most-recently-active
+/// OTHER app (so Ctrl+W returns to the previous tab, browser-style). Apps that
+/// were never active sort last; `None` only if `slept_id` was the only app.
+fn previous_app(state: &AppState, slept_id: &str, app_ids: &[String]) -> Option<String> {
+    let last_active = state.last_active.lock().ok()?;
+    app_ids
+        .iter()
+        .filter(|id| id.as_str() != slept_id)
+        .max_by_key(|id| last_active.get(*id).copied())
+        .cloned()
 }
 
 /// Single dispatch point for every keyboard shortcut. The injected app-webview
@@ -177,14 +175,10 @@ pub fn handle_shortcut(
                 Some(a) => a,
                 None => return Ok(()),
             };
-            let pos = match app_ids.iter().position(|id| *id == active_id) {
-                Some(p) => p,
-                None => return Ok(()),
-            };
-            // Reversible sleep, then switch to a neighbor (next else prev else none).
+            // Reversible sleep, then switch to the most-recently-active OTHER
+            // app (browser-like "close tab → return to previous tab").
             crate::commands::webviews::sleep_app_inner(&app_handle, &active_id, &state)?;
-            if let Some(nidx) = neighbor_index(pos, app_ids.len()) {
-                let target = app_ids[nidx].clone();
+            if let Some(target) = previous_app(&state, &active_id, &app_ids) {
                 crate::commands::webviews::open_app(app_handle, space_id, target, state)?;
             }
             Ok(())
@@ -225,19 +219,6 @@ mod tests {
         assert_eq!(jump_index(3, 3), Some(2));
         assert_eq!(jump_index(4, 3), None);
         assert_eq!(jump_index(0, 3), None);
-    }
-
-    #[test]
-    fn neighbor_prefers_after_then_before() {
-        assert_eq!(neighbor_index(1, 3), Some(1)); // middle: after slides in
-        assert_eq!(neighbor_index(2, 3), Some(1)); // last: new last
-        assert_eq!(neighbor_index(0, 3), Some(0)); // first of many: after slides in
-    }
-
-    #[test]
-    fn neighbor_only_app_returns_none() {
-        assert_eq!(neighbor_index(0, 1), None);
-        assert_eq!(neighbor_index(0, 0), None);
     }
 
     #[test]
