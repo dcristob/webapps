@@ -120,6 +120,11 @@ export async function closeDialog(): Promise<void> {
   return invoke("close_dialog");
 }
 
+// Shortcuts
+export async function handleShortcut(action: string): Promise<void> {
+  return invoke("handle_shortcut", { action });
+}
+
 // Media permissions
 export async function setAppPermission(
   spaceId: string,

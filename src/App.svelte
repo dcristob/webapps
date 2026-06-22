@@ -6,6 +6,7 @@
   import SpaceDialog from "./lib/components/SpaceDialog.svelte";
   import { loadSpaces } from "./lib/stores/spaces";
   import { initTitleListener } from "./lib/stores/apps";
+  import { installShellShortcuts } from "./lib/shortcuts";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { pendingRequest, setCapture } from "./lib/stores/permissions";
   import { evalInApp } from "./lib/api";
@@ -81,8 +82,15 @@
   let unlistenCap: UnlistenFn | null = null;
   let unlistenChanged: UnlistenFn | null = null;
   let unlistenCancelled: UnlistenFn | null = null;
+  let cleanupShortcuts: (() => void) | null = null;
 
   onMount(async () => {
+    // Shell webviews (sidebar + topbar) get the keyboard-shortcut listener.
+    // Dialog webviews manage their own input/Escape handling.
+    if (!dialogMode) {
+      cleanupShortcuts = installShellShortcuts();
+    }
+
     // Sidebar mode: load spaces and init title listener
     if (!dialogMode && !mode) {
       await loadSpaces();
@@ -131,6 +139,7 @@
     unlistenCap?.();
     unlistenChanged?.();
     unlistenCancelled?.();
+    cleanupShortcuts?.();
   });
 </script>
 
