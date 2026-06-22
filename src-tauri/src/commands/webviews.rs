@@ -739,6 +739,12 @@ pub fn ensure_app_open(
 
     let _ = app_handle.emit("app-woke", &app_clone.id);
 
+    // Focus the newly-created app webview so keyboard shortcuts chain naturally
+    // (otherwise focus stays on whichever webview triggered the open).
+    if let Some(wv) = app_handle.get_webview(&format!("app-{}", app_clone.id)) {
+        let _ = wv.set_focus();
+    }
+
     Ok(())
 }
 
@@ -757,6 +763,9 @@ pub fn switch_to_app(app_handle: AppHandle, _space_id: String, app_id: String, s
         if let Some(label) = labels.get(&app_id) {
             if let Some(webview) = app_handle.get_webview(label) {
                 webview.show().map_err(|e| e.to_string())?;
+                // Move keyboard focus onto the newly-shown app so shortcut
+                // chaining works (Ctrl+2 → Ctrl+3) without a manual click.
+                let _ = webview.set_focus();
             }
         }
     }

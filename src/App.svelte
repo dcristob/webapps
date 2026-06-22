@@ -6,7 +6,7 @@
   import SpaceDialog from "./lib/components/SpaceDialog.svelte";
   import SpaceSwitcherPalette from "./lib/components/SpaceSwitcherPalette.svelte";
   import { loadSpaces } from "./lib/stores/spaces";
-  import { initTitleListener } from "./lib/stores/apps";
+  import { initTitleListener, activeAppId } from "./lib/stores/apps";
   import { installShellShortcuts } from "./lib/shortcuts";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { pendingRequest, setCapture } from "./lib/stores/permissions";
@@ -83,6 +83,7 @@
   let unlistenCap: UnlistenFn | null = null;
   let unlistenChanged: UnlistenFn | null = null;
   let unlistenCancelled: UnlistenFn | null = null;
+  let unlistenActive: UnlistenFn | null = null;
   let cleanupShortcuts: (() => void) | null = null;
 
   onMount(async () => {
@@ -96,6 +97,12 @@
     if (!dialogMode && !mode) {
       await loadSpaces();
       await initTitleListener();
+
+      // Keep the sidebar's active-app highlight in sync when Rust switches apps
+      // (keyboard shortcuts, or any backend-driven switch).
+      unlistenActive = await listen<string | null>("active-app-changed", (event) => {
+        activeAppId.set(event.payload);
+      });
 
       unlistenReq = await listen<{
         space_id: string;
@@ -140,6 +147,7 @@
     unlistenCap?.();
     unlistenChanged?.();
     unlistenCancelled?.();
+    unlistenActive?.();
     cleanupShortcuts?.();
   });
 </script>

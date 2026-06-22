@@ -1,11 +1,18 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { emit } from "@tauri-apps/api/event";
-  import { spaces, activeSpaceId, switchToSpace } from "../stores/spaces";
+  import { spaces, activeSpaceId, switchToSpace, loadSpaces } from "../stores/spaces";
   import { focusActiveApp, closeDialog } from "../api";
   import { autofocus } from "../actions";
 
   let query = $state("");
   let selected = $state(0);
+
+  // The palette runs in its own dialog webview with a fresh (empty) store
+  // instance — populate it on mount so the list isn't blank.
+  onMount(() => {
+    void loadSpaces();
+  });
 
   // Filtered, case-insensitive substring match on space name. Empty query → all.
   let filtered = $derived(

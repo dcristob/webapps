@@ -161,11 +161,16 @@ pub fn run() {
             // --- Add sidebar webview ---
             let sidebar_url = tauri::WebviewUrl::App("index.html".into());
             let sidebar_builder = tauri::WebviewBuilder::new("sidebar", sidebar_url);
-            window.add_child(
+            let sidebar_webview = window.add_child(
                 sidebar_builder,
                 LogicalPosition::new(0.0, TOPBAR_HEIGHT),
                 LogicalSize::new(sidebar_width as f64, logical_height - TOPBAR_HEIGHT),
             )?;
+            // Honor persisted sidebar visibility: start hidden if the user left
+            // the sidebar toggled off (Ctrl+B).
+            if !sidebar_visible {
+                let _ = sidebar_webview.hide();
+            }
 
             // On Linux: reparent sidebar from vbox into the inner hbox
             #[cfg(target_os = "linux")]
