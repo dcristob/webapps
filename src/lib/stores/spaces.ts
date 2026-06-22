@@ -27,6 +27,9 @@ export async function switchToSpace(spaceId: string) {
   await api.switchSpace(spaceId);
   activeSpaceId.set(spaceId);
   await api.hideAllAppWebviews();
+  // On entering the space, open the last-used app (this session) or the first
+  // app, so something is focused and shortcuts work immediately.
+  await api.restoreOrOpenApp();
 }
 
 export async function deleteExistingSpace(spaceId: string) {

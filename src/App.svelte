@@ -8,6 +8,7 @@
   import { loadSpaces } from "./lib/stores/spaces";
   import { initTitleListener, activeAppId } from "./lib/stores/apps";
   import { installShellShortcuts } from "./lib/shortcuts";
+  import { restoreOrOpenApp } from "./lib/api";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { pendingRequest, setCapture } from "./lib/stores/permissions";
   import { evalInApp } from "./lib/api";
@@ -97,6 +98,9 @@
     if (!dialogMode && !mode) {
       await loadSpaces();
       await initTitleListener();
+      // On launch (entering the initial space), open the last-used app this
+      // session, else the first app, so something is focused and shortcuts work.
+      await restoreOrOpenApp();
 
       // Keep the sidebar's active-app highlight in sync when Rust switches apps
       // (keyboard shortcuts, or any backend-driven switch).

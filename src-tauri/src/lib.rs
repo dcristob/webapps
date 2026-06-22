@@ -336,6 +336,7 @@ pub fn run() {
             commands::webviews::get_active_app,
             commands::webviews::show_app_context_menu,
             commands::webviews::toggle_sidebar,
+            commands::webviews::restore_or_open_app,
             commands::shortcuts::handle_shortcut,
             commands::webviews::webview_go_back,
             commands::webviews::webview_reload,

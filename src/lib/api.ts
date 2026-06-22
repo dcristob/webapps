@@ -129,6 +129,10 @@ export async function focusActiveApp(): Promise<void> {
   return invoke("focus_active_app");
 }
 
+export async function restoreOrOpenApp(): Promise<void> {
+  return invoke("restore_or_open_app");
+}
+
 // Media permissions
 export async function setAppPermission(
   spaceId: string,

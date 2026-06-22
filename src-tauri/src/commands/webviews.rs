@@ -904,6 +904,42 @@ pub fn toggle_sidebar(app_handle: AppHandle, state: State<'_, AppState>) -> Resu
     toggle_sidebar_inner(&app_handle, &state)
 }
 
+/// If no app is currently active, open the most-recently-active app in the
+/// active space (this session), or the space's first app if none was opened.
+/// Used on launch and after switching spaces so there is always something
+/// focused — and keyboard shortcuts work immediately.
+#[tauri::command]
+pub fn restore_or_open_app(app_handle: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if state.active_app_id.lock().map_err(|e| e.to_string())?.is_some() {
+        return Ok(());
+    }
+
+    let active_space_id = state.active_space_id.lock().map_err(|e| e.to_string())?.clone();
+    let app_ids: Vec<String> = {
+        let spaces = state.spaces.lock().map_err(|e| e.to_string())?;
+        let Some(space) = spaces.iter().find(|s| s.space.id == active_space_id) else {
+            return Ok(());
+        };
+        space.apps.iter().map(|a| a.id.clone()).collect()
+    };
+    if app_ids.is_empty() {
+        return Ok(());
+    }
+
+    // Most-recently-active app in this space this session, else the first app.
+    let target = {
+        let last_active = state.last_active.lock().map_err(|e| e.to_string())?;
+        app_ids
+            .iter()
+            .filter_map(|id| last_active.get(id).map(|t| (id.as_str(), *t)))
+            .max_by_key(|(_, t)| *t)
+            .map(|(id, _)| id.to_string())
+            .unwrap_or_else(|| app_ids[0].clone())
+    };
+
+    open_app(app_handle, active_space_id, target, state)
+}
+
 #[tauri::command]
 pub fn show_app_context_menu(app_handle: AppHandle, space_id: String, app_id: String, x: f64, y: f64, state: State<'_, AppState>) -> Result<(), String> {
     // Store the target so the menu-event handler knows which app was right-clicked

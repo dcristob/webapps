@@ -8,10 +8,18 @@
   let query = $state("");
   let selected = $state(0);
 
+  // Highlight the active space (not the first row) when the palette opens, and
+  // re-select it whenever the filter changes (fall back to 0 if filtered out).
+  function syncSelectionToActive() {
+    const idx = filtered.findIndex((s) => s.space.id === $activeSpaceId);
+    selected = idx === -1 ? 0 : idx;
+  }
+
   // The palette runs in its own dialog webview with a fresh (empty) store
   // instance — populate it on mount so the list isn't blank.
-  onMount(() => {
-    void loadSpaces();
+  onMount(async () => {
+    await loadSpaces();
+    syncSelectionToActive();
   });
 
   // Filtered, case-insensitive substring match on space name. Empty query → all.
@@ -55,7 +63,7 @@
   <input
     class="search"
     bind:value={query}
-    oninput={() => (selected = 0)}
+    oninput={syncSelectionToActive}
     placeholder="Switch space…"
     use:autofocus
   />
