@@ -342,6 +342,8 @@ pub fn run() {
             commands::favicon::refetch_app_icon,
             commands::dialog::show_dialog,
             commands::dialog::close_dialog,
+            commands::dialog::open_space_switcher,
+            commands::dialog::focus_active_app,
             commands::permissions::set_app_permission,
             commands::permissions::get_app_permissions,
             commands::permissions::respond_media_permission,

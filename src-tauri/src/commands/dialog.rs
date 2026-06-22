@@ -1,8 +1,11 @@
 use std::collections::HashMap;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use crate::state::AppState;
 
 const DIALOG_WIDTH: f64 = 450.0;
 const DIALOG_HEIGHT: f64 = 410.0;
+const PALETTE_WIDTH: f64 = 420.0;
+const PALETTE_HEIGHT: f64 = 360.0;
 
 #[tauri::command]
 pub fn show_dialog(app_handle: AppHandle, dialog_type: String, space_id: Option<String>, params: Option<HashMap<String, String>>) -> Result<(), String> {
@@ -78,6 +81,79 @@ pub fn show_dialog(app_handle: AppHandle, dialog_type: String, space_id: Option<
 pub fn close_dialog(app_handle: AppHandle) -> Result<(), String> {
     if let Some(window) = app_handle.get_webview_window("dialog") {
         window.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_space_switcher(app_handle: AppHandle) -> Result<(), String> {
+    // Honor the one-dialog rule: if any dialog is already open, just focus it.
+    if let Some(existing) = app_handle.get_webview_window("dialog") {
+        existing.set_focus().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    let url = "index.html?dialog=space-switcher";
+
+    let main_window = app_handle.get_window("main").ok_or("Main window not found")?;
+    let win_pos = main_window.outer_position().map_err(|e| e.to_string())?;
+    let win_size = main_window.outer_size().map_err(|e| e.to_string())?;
+    let scale = main_window.scale_factor().map_err(|e| e.to_string())?;
+
+    let wlw = win_size.width as f64 / scale;
+    let wlh = win_size.height as f64 / scale;
+    let wlx = win_pos.x as f64 / scale;
+    let wly = win_pos.y as f64 / scale;
+
+    let x = wlx + (wlw - PALETTE_WIDTH) / 2.0;
+    let y = wly + (wlh - PALETTE_HEIGHT) / 2.0;
+
+    let dialog = WebviewWindowBuilder::new(
+        &app_handle,
+        "dialog",
+        WebviewUrl::App(url.into()),
+    )
+    .title("Switch Space")
+    .inner_size(PALETTE_WIDTH, PALETTE_HEIGHT)
+    .position(x, y)
+    .resizable(false)
+    .decorations(false)
+    .build()
+    .map_err(|e| e.to_string())?;
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
+    {
+        use gtk::prelude::*;
+        let parent_gtk = main_window.gtk_window().map_err(|e| e.to_string())?;
+        let dialog_gtk = dialog.as_ref().window().gtk_window().map_err(|e| e.to_string())?;
+        dialog_gtk.set_transient_for(Some(&parent_gtk));
+        dialog_gtk.set_modal(true);
+    }
+
+    Ok(())
+}
+
+/// Return keyboard focus to the active app's webview. Used after a dialog
+/// (e.g. the space switcher) closes so typing resumes in the app, not the shell.
+#[tauri::command]
+pub fn focus_active_app(app_handle: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let active_id = state.active_app_id.lock().map_err(|e| e.to_string())?.clone();
+    if let Some(id) = active_id {
+        let label = {
+            let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
+            labels.get(&id).cloned()
+        };
+        if let Some(label) = label {
+            if let Some(webview) = app_handle.get_webview(&label) {
+                let _ = webview.set_focus();
+            }
+        }
     }
     Ok(())
 }
