@@ -256,6 +256,8 @@ mod tests {
         }
         // Capture phase + shell-wins behavior.
         assert!(js.contains("addEventListener(\"keydown\""));
+        assert!(js.contains(", true)"), "listener must bind in the capture phase");
+        assert!(js.contains("__webapps_shortcut_listener"), "listener must be idempotent");
         assert!(js.contains("e.preventDefault()"));
         assert!(js.contains("e.stopImmediatePropagation()"));
     }

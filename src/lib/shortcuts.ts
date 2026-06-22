@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { handleShortcut } from "./api";
 
 // Shell-side binding table. MIRRORS the injected app-webview table in
 // src-tauri/src/commands/shortcuts.rs (build_shortcut_listener_js). Both map
@@ -52,7 +52,7 @@ export function installShellShortcuts(): () => void {
     if (!action) return;
     e.preventDefault();
     e.stopImmediatePropagation();
-    void invoke("handle_shortcut", { action });
+    void handleShortcut(action);
   };
   window.addEventListener("keydown", handler, true);
   return () => window.removeEventListener("keydown", handler, true);
