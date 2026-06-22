@@ -621,6 +621,7 @@ pub fn ensure_app_open(
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 let _ = webview.eval(MEDIA_GUARD_JS);
                 let _ = webview.eval(&window_open_override_js);
+                let _ = webview.eval(crate::commands::shortcuts::build_shortcut_listener_js());
             }
             if payload.event() == tauri::webview::PageLoadEvent::Finished {
                 let _ = webview.eval(&link_interceptor_js);
