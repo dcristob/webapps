@@ -42,6 +42,54 @@ pub fn neighbor_index(removed: usize, len_before: usize) -> Option<usize> {
     }
 }
 
+/// JS injected into every app webview. Listens for our shortcut bindings in the
+/// capture phase (so the hosted app never sees them — the shell wins, matching
+/// Slack/Rambox), then forwards the matched action to `handle_shortcut`.
+///
+/// The key→action table MIRRORS the one in `src/lib/shortcuts.ts`. Both map onto
+/// the same closed set of action strings — keep them in sync when editing.
+pub fn build_shortcut_listener_js() -> &'static str {
+    r#"
+(function() {
+  if (window.__webapps_shortcut_listener) return;
+  window.__webapps_shortcut_listener = true;
+
+  // (ctrl, shift, keyLower) -> action
+  var TABLE = {
+    "true|false|tab": "cycle-next",
+    "true|true|tab": "cycle-prev",
+    "true|false|b": "toggle-sidebar",
+    "true|false|n": "add-app",
+    "true|false|w": "sleep-app",
+    "true|true|s": "space-switcher"
+  };
+
+  function actionFor(e) {
+    var keyLower = (e.key || "").toLowerCase();
+    // Ctrl+1..9 (no shift, no alt, no meta)
+    if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+        && keyLower.length === 1 && keyLower >= "1" && keyLower <= "9") {
+      return "jump-" + keyLower;
+    }
+    if (!e.ctrlKey || e.metaKey || e.altKey) return null;
+    var k = "true|" + (e.shiftKey ? "true" : "false") + "|" + keyLower;
+    return TABLE[k] || null;
+  }
+
+  document.addEventListener("keydown", function(e) {
+    var action = actionFor(e);
+    if (!action) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (window.__TAURI_INTERNALS__) {
+      try { window.__TAURI_INTERNALS__.invoke("handle_shortcut", { action: action }); }
+      catch (err) { /* ignore */ }
+    }
+  }, true);
+})();
+"#
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +131,25 @@ mod tests {
     fn neighbor_only_app_returns_none() {
         assert_eq!(neighbor_index(0, 1), None);
         assert_eq!(neighbor_index(0, 0), None);
+    }
+
+    #[test]
+    fn shortcut_listener_js_contains_all_actions() {
+        let js = build_shortcut_listener_js();
+        for needle in [
+            "cycle-next",
+            "cycle-prev",
+            "toggle-sidebar",
+            "add-app",
+            "sleep-app",
+            "space-switcher",
+            "handle_shortcut",
+        ] {
+            assert!(js.contains(needle), "shortcut listener JS missing {needle}");
+        }
+        // Capture phase + shell-wins behavior.
+        assert!(js.contains("addEventListener(\"keydown\""));
+        assert!(js.contains("e.preventDefault()"));
+        assert!(js.contains("e.stopImmediatePropagation()"));
     }
 }
