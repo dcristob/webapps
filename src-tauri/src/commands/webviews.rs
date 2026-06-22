@@ -750,9 +750,8 @@ pub fn ensure_app_open(
 
 #[tauri::command]
 pub fn switch_to_app(app_handle: AppHandle, _space_id: String, app_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    // Hide all app webviews, then show the target. Scope the labels guard so it
-    // is dropped before reposition_app_webviews re-locks webview_labels (Mutex is
-    // not reentrant — holding it across the reposition call would deadlock).
+    // Hide all app webviews, then show the target. (Locks are scoped for hygiene;
+    // GTK box packing reflows the shown webview into the app area automatically.)
     {
         let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
         for (_, label) in labels.iter() {
@@ -781,8 +780,6 @@ pub fn switch_to_app(app_handle: AppHandle, _space_id: String, app_id: String, s
         last_active.insert(app_id, Instant::now());
     }
 
-    // Now no AppState locks are held: safe to reposition (which locks again).
-    reposition_app_webviews(&app_handle, &state)?;
     Ok(())
 }
 
@@ -828,48 +825,10 @@ pub fn get_active_app(state: State<'_, AppState>) -> Result<Option<String>, Stri
     Ok(active.clone())
 }
 
-/// Reposition/resize the ACTIVE app webview to match current sidebar visibility
-/// and sidebar width. Called from `toggle_sidebar`, `switch_to_app`, and
-/// `ensure_app_open` so the layout never desyncs when the sidebar is toggled.
-///
-/// Hidden app webviews are irrelevant (they are `.hide()`-n elsewhere); only the
-/// active one needs explicit geometry.
-pub fn reposition_app_webviews(app_handle: &AppHandle, state: &AppState) -> Result<(), String> {
-    let (visible, sidebar_width) = {
-        let visible = *state.sidebar_visible.lock().map_err(|e| e.to_string())?;
-        let cfg = state.global_config.lock().map_err(|e| e.to_string())?;
-        (visible, cfg.general.sidebar_width)
-    };
-
-    let active_id = state.active_app_id.lock().map_err(|e| e.to_string())?.clone();
-    let Some(active_id) = active_id else { return Ok(()); };
-
-    let label = {
-        let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
-        labels.get(&active_id).cloned()
-    };
-    let Some(label) = label else { return Ok(()); };
-    let Some(webview) = app_handle.get_webview(&label) else { return Ok(()); };
-
-    let window = app_handle.get_window("main").ok_or("Main window not found")?;
-    let size = window.inner_size().map_err(|e| e.to_string())?;
-    let scale = window.scale_factor().map_err(|e| e.to_string())?;
-    let logical_w = size.width as f64 / scale;
-    let logical_h = size.height as f64 / scale;
-
-    let x = if visible { sidebar_width as f64 } else { 0.0 };
-    let w = if visible { logical_w - sidebar_width as f64 } else { logical_w };
-    webview
-        .set_position(LogicalPosition::new(x, TOPBAR_HEIGHT))
-        .map_err(|e| e.to_string())?;
-    webview
-        .set_size(LogicalSize::new(w, logical_h - TOPBAR_HEIGHT))
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-/// Flip sidebar visibility, persist it, hide/show the sidebar webview, and
-/// resize the active app webview to fill the new area.
+/// Flip sidebar visibility, persist it, and hide/show the sidebar webview. The
+/// app webview reflows automatically via GTK box packing (the app widget is
+/// expand=true in inner_hbox) — explicit set_size on a packed child widget
+/// fights GTK, so we rely on hide/show to free/reserve the sidebar's space.
 pub fn toggle_sidebar_inner(app_handle: &AppHandle, state: &AppState) -> Result<(), String> {
     let new_visible = {
         let mut visible = state.sidebar_visible.lock().map_err(|e| e.to_string())?;
@@ -895,7 +854,6 @@ pub fn toggle_sidebar_inner(app_handle: &AppHandle, state: &AppState) -> Result<
         }
     }
 
-    reposition_app_webviews(app_handle, state)?;
     Ok(())
 }
 
