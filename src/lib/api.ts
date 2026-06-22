@@ -125,6 +125,10 @@ export async function handleShortcut(action: string): Promise<void> {
   return invoke("handle_shortcut", { action });
 }
 
+export async function focusActiveApp(): Promise<void> {
+  return invoke("focus_active_app");
+}
+
 // Media permissions
 export async function setAppPermission(
   spaceId: string,

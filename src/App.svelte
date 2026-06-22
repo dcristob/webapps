@@ -4,6 +4,7 @@
   import TopBar from "./lib/components/TopBar.svelte";
   import AppDialog from "./lib/components/AppDialog.svelte";
   import SpaceDialog from "./lib/components/SpaceDialog.svelte";
+  import SpaceSwitcherPalette from "./lib/components/SpaceSwitcherPalette.svelte";
   import { loadSpaces } from "./lib/stores/spaces";
   import { initTitleListener } from "./lib/stores/apps";
   import { installShellShortcuts } from "./lib/shortcuts";
@@ -163,6 +164,8 @@
     initialName={dialogSpaceName}
     initialColor={dialogSpaceColor}
   />
+{:else if dialogMode === "space-switcher"}
+  <SpaceSwitcherPalette />
 {:else if mode === "topbar"}
   <TopBar />
 {:else}
