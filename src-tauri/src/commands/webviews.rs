@@ -470,10 +470,11 @@ pub fn ensure_app_open(
 
     let window = app_handle.get_window("main").ok_or("Main window not found")?;
 
-    let sidebar_width = {
+    let (sidebar_width, sidebar_visible) = {
         let config = state.global_config.lock().map_err(|e| e.to_string())?;
-        config.general.sidebar_width
+        (config.general.sidebar_width, *state.sidebar_visible.lock().map_err(|e| e.to_string())?)
     };
+    let sidebar_x = if sidebar_visible { sidebar_width as f64 } else { 0.0 };
 
     let window_size = window.inner_size().map_err(|e| e.to_string())?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
@@ -638,8 +639,8 @@ pub fn ensure_app_open(
 
     window.add_child(
         webview_builder,
-        LogicalPosition::new(sidebar_width as f64, TOPBAR_HEIGHT),
-        LogicalSize::new(logical_width - sidebar_width as f64, logical_height - TOPBAR_HEIGHT),
+        LogicalPosition::new(sidebar_x, TOPBAR_HEIGHT),
+        LogicalSize::new(logical_width - sidebar_x, logical_height - TOPBAR_HEIGHT),
     ).map_err(|e| e.to_string())?;
 
     // On Linux: disable ITP and set cookie policy to accept all cookies
@@ -742,29 +743,36 @@ pub fn ensure_app_open(
 
 #[tauri::command]
 pub fn switch_to_app(app_handle: AppHandle, _space_id: String, app_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
-
-    // Hide all app webviews
-    for (_, label) in labels.iter() {
-        if let Some(webview) = app_handle.get_webview(label) {
-            let _ = webview.hide();
+    // Hide all app webviews, then show the target. Scope the labels guard so it
+    // is dropped before reposition_app_webviews re-locks webview_labels (Mutex is
+    // not reentrant — holding it across the reposition call would deadlock).
+    {
+        let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
+        for (_, label) in labels.iter() {
+            if let Some(webview) = app_handle.get_webview(label) {
+                let _ = webview.hide();
+            }
+        }
+        if let Some(label) = labels.get(&app_id) {
+            if let Some(webview) = app_handle.get_webview(label) {
+                webview.show().map_err(|e| e.to_string())?;
+            }
         }
     }
 
-    // Show the target app webview
-    if let Some(label) = labels.get(&app_id) {
-        if let Some(webview) = app_handle.get_webview(label) {
-            webview.show().map_err(|e| e.to_string())?;
-        }
+    {
+        let mut active_app = state.active_app_id.lock().map_err(|e| e.to_string())?;
+        *active_app = Some(app_id.clone());
+        let _ = app_handle.emit("active-app-changed", Some(app_id.clone()));
     }
 
-    let mut active_app = state.active_app_id.lock().map_err(|e| e.to_string())?;
-    *active_app = Some(app_id.clone());
-    let _ = app_handle.emit("active-app-changed", Some(app_id.clone()));
+    {
+        let mut last_active = state.last_active.lock().map_err(|e| e.to_string())?;
+        last_active.insert(app_id, Instant::now());
+    }
 
-    let mut last_active = state.last_active.lock().map_err(|e| e.to_string())?;
-    last_active.insert(app_id, Instant::now());
-
+    // Now no AppState locks are held: safe to reposition (which locks again).
+    reposition_app_webviews(&app_handle, &state)?;
     Ok(())
 }
 
@@ -808,6 +816,80 @@ pub fn hide_all_app_webviews(app_handle: AppHandle, state: State<'_, AppState>) 
 pub fn get_active_app(state: State<'_, AppState>) -> Result<Option<String>, String> {
     let active = state.active_app_id.lock().map_err(|e| e.to_string())?;
     Ok(active.clone())
+}
+
+/// Reposition/resize the ACTIVE app webview to match current sidebar visibility
+/// and sidebar width. Called from `toggle_sidebar`, `switch_to_app`, and
+/// `ensure_app_open` so the layout never desyncs when the sidebar is toggled.
+///
+/// Hidden app webviews are irrelevant (they are `.hide()`-n elsewhere); only the
+/// active one needs explicit geometry.
+pub fn reposition_app_webviews(app_handle: &AppHandle, state: &AppState) -> Result<(), String> {
+    let (visible, sidebar_width) = {
+        let visible = *state.sidebar_visible.lock().map_err(|e| e.to_string())?;
+        let cfg = state.global_config.lock().map_err(|e| e.to_string())?;
+        (visible, cfg.general.sidebar_width)
+    };
+
+    let active_id = state.active_app_id.lock().map_err(|e| e.to_string())?.clone();
+    let Some(active_id) = active_id else { return Ok(()); };
+
+    let label = {
+        let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
+        labels.get(&active_id).cloned()
+    };
+    let Some(label) = label else { return Ok(()); };
+    let Some(webview) = app_handle.get_webview(&label) else { return Ok(()); };
+
+    let window = app_handle.get_window("main").ok_or("Main window not found")?;
+    let size = window.inner_size().map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let logical_w = size.width as f64 / scale;
+    let logical_h = size.height as f64 / scale;
+
+    let x = if visible { sidebar_width as f64 } else { 0.0 };
+    let w = if visible { logical_w - sidebar_width as f64 } else { logical_w };
+    webview
+        .set_position(LogicalPosition::new(x, TOPBAR_HEIGHT))
+        .map_err(|e| e.to_string())?;
+    webview
+        .set_size(LogicalSize::new(w, logical_h - TOPBAR_HEIGHT))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Flip sidebar visibility, persist it, hide/show the sidebar webview, and
+/// resize the active app webview to fill the new area.
+pub fn toggle_sidebar_inner(app_handle: &AppHandle, state: &AppState) -> Result<(), String> {
+    let new_visible = {
+        let mut visible = state.sidebar_visible.lock().map_err(|e| e.to_string())?;
+        *visible = !*visible;
+        *visible
+    };
+
+    // Persist (non-fatal: in-memory state is already flipped).
+    {
+        let cfg = state.global_config.lock().map_err(|e| e.to_string())?;
+        if let Err(e) = crate::config::storage::save_global_config(&cfg) {
+            eprintln!("failed to persist sidebar_visible: {e}");
+        }
+    }
+
+    if let Some(sidebar) = app_handle.get_webview("sidebar") {
+        if new_visible {
+            let _ = sidebar.show();
+        } else {
+            let _ = sidebar.hide();
+        }
+    }
+
+    reposition_app_webviews(app_handle, state)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn toggle_sidebar(app_handle: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    toggle_sidebar_inner(&app_handle, &state)
 }
 
 #[tauri::command]

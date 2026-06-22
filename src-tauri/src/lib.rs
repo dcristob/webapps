@@ -330,6 +330,7 @@ pub fn run() {
             commands::webviews::hide_all_app_webviews,
             commands::webviews::get_active_app,
             commands::webviews::show_app_context_menu,
+            commands::webviews::toggle_sidebar,
             commands::webviews::webview_go_back,
             commands::webviews::webview_reload,
             commands::webviews::get_slept_apps,
