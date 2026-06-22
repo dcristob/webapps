@@ -15,10 +15,17 @@ pub struct GeneralSettings {
     pub sleep_timeout_mins: u32,
     #[serde(default)]
     pub space_order: Vec<String>,
+    /// Whether the sidebar webview is shown. Toggled by the Ctrl+B shortcut.
+    #[serde(default = "default_sidebar_visible")]
+    pub sidebar_visible: bool,
 }
 
 fn default_sleep_timeout() -> u32 {
     15
+}
+
+fn default_sidebar_visible() -> bool {
+    true
 }
 
 impl Default for GlobalConfig {
@@ -29,6 +36,7 @@ impl Default for GlobalConfig {
                 theme: "dark".to_string(),
                 sleep_timeout_mins: 15,
                 space_order: vec![],
+                sidebar_visible: true,
             },
         }
     }
@@ -137,5 +145,23 @@ isolation_override = false
         let back: AppConfig = toml::from_str(&s).expect("deserialize");
         assert_eq!(back.permissions.camera, PermissionState::Allow);
         assert_eq!(back.permissions.microphone, PermissionState::Block);
+    }
+
+    #[test]
+    fn global_config_defaults_sidebar_visible_true() {
+        let cfg = GlobalConfig::default();
+        assert!(cfg.general.sidebar_visible);
+    }
+
+    #[test]
+    fn global_config_sidebar_visible_defaults_when_missing() {
+        // A config written before this field existed must default to visible.
+        let toml = r#"
+[general]
+sidebar_width = 100
+theme = "dark"
+"#;
+        let cfg: GlobalConfig = toml::from_str(toml).expect("parse");
+        assert!(cfg.general.sidebar_visible);
     }
 }

@@ -12,6 +12,8 @@ pub struct AppState {
     pub spaces: Mutex<Vec<SpaceConfig>>,
     pub active_space_id: Mutex<String>,
     pub active_app_id: Mutex<Option<String>>,
+    /// Whether the sidebar webview is currently shown (toggled by Ctrl+B).
+    pub sidebar_visible: Mutex<bool>,
     pub webview_labels: Mutex<HashMap<String, String>>,
     /// Tracks (space_id, app_id) for the most recent app context-menu right-click.
     pub context_menu_target: Mutex<Option<(String, String)>>,

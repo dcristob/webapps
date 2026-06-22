@@ -67,6 +67,7 @@ pub fn run() {
 
     let global_config = storage::load_global_config().unwrap_or_default();
     let sidebar_width = global_config.general.sidebar_width;
+    let sidebar_visible = global_config.general.sidebar_visible;
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -76,6 +77,7 @@ pub fn run() {
             spaces: Mutex::new(spaces),
             active_space_id: Mutex::new("general".to_string()),
             active_app_id: Mutex::new(None),
+            sidebar_visible: Mutex::new(sidebar_visible),
             webview_labels: Mutex::new(HashMap::new()),
             context_menu_target: Mutex::new(None),
             space_context_menu_target: Mutex::new(None),
