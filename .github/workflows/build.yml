@@ -3,6 +3,7 @@ name: Build and Release
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -10,34 +11,33 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-rust:
-    name: Build Rust
+  test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-
-      - name: Build Rust
+      - name: Install Linux dependencies
         run: |
-          cd src-tauri
-          cargo build --release
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libgtk-3-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Rust tests
+        run: cargo test --release
+        working-directory: src-tauri
+      - name: Frontend typecheck
+        run: npm run check
 
-      - name: Run tests
-        run: |
-          cd src-tauri
-          cargo test --release
-
-  build-tauri:
-    name: Build Tauri (${{ matrix.platform }})
-    needs: build-rust
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: test
     strategy:
       fail-fast: false
       matrix:
@@ -48,45 +48,31 @@ jobs:
             args: "--target universal-apple-darwin"
           - platform: windows-latest
             args: ""
-
     runs-on: ${{ matrix.platform }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libgtk-3-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+      - run: npm ci
+      - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NO_STRIP: ${{ matrix.platform == 'ubuntu-latest' && '1' || '' }}
         with:
           args: ${{ matrix.args }}
-
       - name: Upload artifacts (Linux)
         if: matrix.platform == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
@@ -95,14 +81,12 @@ jobs:
           path: |
             src-tauri/target/release/bundle/**/*.deb
             src-tauri/target/release/bundle/**/*.AppImage
-
       - name: Upload artifacts (macOS)
         if: matrix.platform == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
           name: macos-artifacts
           path: src-tauri/target/release/bundle/**/*.dmg
-
       - name: Upload artifacts (Windows)
         if: matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v4
@@ -112,41 +96,23 @@ jobs:
             src-tauri/target/release/bundle/**/*.msi
             src-tauri/target/release/bundle/**/*.exe
 
-  create-release:
-    name: Create Release
-    needs: [build-rust, build-tauri]
+  continuous:
+    name: Continuous Release
+    needs: [test, build]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Get version from Cargo.toml
+      - uses: actions/checkout@v4
+      - name: Get version
         id: get_version
-        run: |
-          VERSION=$(grep '^version' src-tauri/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Generate timestamp
-        id: get_timestamp
-        run: |
-          TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        run: echo "version=$(grep '^version' src-tauri/Cargo.toml | head -1 | sed 's/.*\"\(.*\)".*/\1/')" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
           pattern: "*-artifacts"
           merge-multiple: true
-
-      - name: List artifacts
-        run: |
-          echo "Downloaded artifacts:"
-          find artifacts -type f -name "*" | sort
-
       - name: Delete previous continuous release
         uses: dev-drprasad/delete-tag-and-release@v1.1
         with:
@@ -154,33 +120,53 @@ jobs:
           delete_release: true
           github_token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - name: Publish continuous release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: continuous
           name: "Continuous Build"
           body: |
-            This is a continuous build from the main branch.
-            
+            Rolling build from `main` (bleeding-edge). For stable releases see [Releases](https://github.com/${{ github.repository }}/releases).
+
             **Version:** ${{ steps.get_version.outputs.version }}
-            **Build Date:** ${{ steps.get_timestamp.outputs.timestamp }}
             **Commit:** ${{ github.sha }}
-            
-            ## Installation
-            
-            - **Linux**: Download `.deb` for Debian/Ubuntu or `.AppImage` for universal Linux
-            - **macOS**: Download `.dmg` and drag to Applications
-            - **Windows**: Download `.msi` installer
-            
-            ## What's Included
-            
-            Latest changes from the main branch with all platform builds.
-            
-            > **Note:** This is a development build. For stable releases, check the [Releases](https://github.com/${{ github.repository }}/releases) page.
           files: |
             artifacts/**/*
           prerelease: true
           generate_release_notes: true
+
+  release:
+    name: Stable Release
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate release notes
+        id: cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: "*-artifacts"
+          merge-multiple: true
+      - name: Publish stable release
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          body: ${{ steps.cliff.outputs.content }}
+          files: |
+            artifacts/**/*
+          prerelease: false
