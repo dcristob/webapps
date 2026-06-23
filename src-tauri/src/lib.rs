@@ -167,7 +167,12 @@ pub fn run() {
                 LogicalSize::new(sidebar_width as f64, logical_height - TOPBAR_HEIGHT),
             )?;
             // Honor persisted sidebar visibility: start hidden if the user left
-            // the sidebar toggled off (Ctrl+B).
+            // the sidebar toggled off (Ctrl+B). On Linux we must NOT hide here:
+            // the sidebar is not mapped yet, and hiding pre-map leaves
+            // WebKitGTK's Wayland wl_subsurface stale and still painting (the
+            // startup ghost). We defer the hide to just after its first map
+            // (see the Linux block below).
+            #[cfg(not(target_os = "linux"))]
             if !sidebar_visible {
                 let _ = sidebar_webview.hide();
             }
@@ -176,6 +181,8 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             {
                 use gtk::prelude::*;
+                use std::cell::Cell;
+                use std::rc::Rc;
                 let vbox = window.default_vbox()?;
                 let children = vbox.children();
                 // children: [topbar, inner_hbox, sidebar]
@@ -183,6 +190,33 @@ pub fn run() {
                 let inner_hbox_widget = children.get(1).cloned();
 
                 if let (Some(sidebar_w), Some(inner_w)) = (sidebar_widget, inner_hbox_widget) {
+                    // Connect the map handler BEFORE reparenting. The sidebar
+                    // maps the moment it is packed into the already-shown
+                    // inner_hbox (below); connecting before that is the only
+                    // way to catch that initial map — connecting after the
+                    // reparent misses it because the widget is already mapped.
+                    if !sidebar_visible {
+                        let done = Rc::new(Cell::new(false));
+                        let done_clone = done.clone();
+                        let sw = sidebar_webview.clone();
+                        sidebar_w.connect_map(move |_w| {
+                            if done_clone.get() {
+                                return;
+                            }
+                            done_clone.set(true);
+                            // Hide from an idle callback so we run outside the
+                            // map signal emission (hiding inside it re-enters
+                            // map/unmap and freezes the event loop). Running
+                            // after map mirrors the proven runtime Ctrl+B path,
+                            // which unmaps WebKitGTK's Wayland wl_subsurface
+                            // cleanly instead of leaving a ghost.
+                            let sw = sw.clone();
+                            gtk::glib::idle_add_local_once(move || {
+                                let _ = sw.hide();
+                            });
+                        });
+                    }
+
                     if let Some(inner_hbox) = inner_w.downcast_ref::<gtk::Box>() {
                         vbox.remove(&sidebar_w);
                         inner_hbox.pack_start(&sidebar_w, false, false, 0);
