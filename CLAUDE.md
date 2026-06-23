@@ -147,6 +147,38 @@ git checkout main
 sharing `~/.config/webapps/webview-data/` corrupt each other's WebKit state
 (cookies/IndexedDB), which manifests as a garbled UI or broken sessions.
 
+### Cutting a release
+
+Releases are **tag-driven** and the CHANGELOG is auto-generated from Conventional
+Commits by [git-cliff](https://git-cliff.org). Two channels exist:
+
+- **`continuous`** — a rolling pre-release recreated on every push to `main`
+  (bleeding-edge preview).
+- **stable `vX.Y.Z`** — immutable version tags, published by the tag-release CI
+  job.
+
+To cut a new stable release, from a clean `main`:
+
+```bash
+# Prerequisite (one-time): install git-cliff. On Arch:
+#   paru -S git-cliff-bin        # or: cargo install git-cliff
+
+./scripts/bump-version.sh 0.2.0   # bump 3 version files + Cargo.lock, regen
+                                  # CHANGELOG.md, commit "chore(release): v0.2.0",
+                                  # tag v0.2.0. Does NOT push.
+git push --follow-tags origin main  # tag push triggers release CI
+```
+
+`bump-version.sh` keeps `Cargo.toml`, `package.json`, and `tauri.conf.json` in
+sync (it aborts if they've drifted) and edits `Cargo.lock` surgically (only the
+`webapps` version — it deliberately avoids `cargo update`, which would drag in
+unrelated dependency bumps). The first release bootstraps `CHANGELOG.md` with the
+full commit history; subsequent runs prepend the new section.
+
+The CI workflow that consumes these tags (test → build all platforms → publish
+the GitHub Release with `git cliff --latest` notes) is specified in
+`docs/superpowers/specs/2026-06-23-releases-design.md`.
+
 ## Conventions
 
 - **Rust:** Follow standard Rust conventions. Use `thiserror` for error types. Organize Tauri commands in `src-tauri/src/commands/` with one file per domain. All Tauri builder setup and module declarations go in `lib.rs` (NOT `main.rs`). `main.rs` just calls `webapps_lib::run()`.
