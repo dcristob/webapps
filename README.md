@@ -75,6 +75,24 @@ launcher entry resolve.
 4. Drag and drop apps to reorder them
 5. Right-click apps to edit or remove them
 
+## Keyboard Shortcuts
+
+Shortcuts work everywhere — in the sidebar/topbar **and** inside hosted apps. The
+shell binds a capture-phase listener, so a shortcut is always handled by WebApps
+and never reaches the underlying web app (Slack/Rambox-style).
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl`+`Tab` | Cycle to the next app |
+| `Ctrl`+`Shift`+`Tab` | Cycle to the previous app |
+| `Ctrl`+`1`…`9` | Jump to the app at that position (no wrap) |
+| `Ctrl`+`B` | Toggle the sidebar |
+| `Ctrl`+`N` | Add a new app to the current space |
+| `Ctrl`+`W` | Sleep the active app and switch to the previous one |
+| `Ctrl`+`Shift`+`S` | Open the searchable space switcher |
+
+The sidebar visibility (`Ctrl`+`B`) is persisted across launches.
+
 ## Configuration
 
 Configuration is stored in `~/.config/webapps/` in TOML format.
