@@ -84,3 +84,27 @@ pub fn webview_data_dir(space_id: &str, app_id: Option<&str>) -> Result<PathBuf,
         None => Ok(base),
     }
 }
+
+/// Delete all service worker registration databases under the webview-data root.
+///
+/// WebKitGTK's service worker implementation is unstable — the worker context
+/// can crash mid-load, surfacing WebKit's internal "Service Worker context
+/// closed" error page (whose own Refresh button can't recover because the
+/// reload still routes through the dead context). App webviews disable SWs
+/// entirely (Gmail et al. degrade gracefully without offline/push), so this
+/// clears any SWs persisted from before that change so they don't control the
+/// first load. Safe to call at startup — no webviews exist yet.
+pub fn clear_all_service_worker_data() {
+    let data_root = match config_dir() {
+        Ok(d) => d.join("webview-data"),
+        Err(_) => return,
+    };
+    if let Ok(entries) = fs::read_dir(&data_root) {
+        for entry in entries.flatten() {
+            let sw_dir = entry.path().join("serviceworkers");
+            if sw_dir.is_dir() {
+                let _ = fs::remove_dir_all(&sw_dir);
+            }
+        }
+    }
+}

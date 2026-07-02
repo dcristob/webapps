@@ -68,6 +68,29 @@ const MEDIA_GUARD_JS: &str = r#"
 })();
 "#;
 
+const SERVICE_WORKER_BLOCKER_JS: &str = r#"
+(function() {
+  if (!('serviceWorker' in navigator)) return;
+  var sw = navigator.serviceWorker;
+
+  // WebKitGTK's service worker implementation is unstable: the worker context
+  // can crash mid-load, surfacing WebKit's internal "Service Worker context
+  // closed" error page — whose Refresh button can't recover because the reload
+  // still routes through the dead context. App webviews don't need SWs (Gmail
+  // et al. degrade gracefully without offline/push), so we disable them:
+  // unregister any existing workers and block new registration.
+  if (sw.getRegistrations) {
+    sw.getRegistrations().then(function(regs) {
+      regs.forEach(function(r) { r.unregister().catch(function() {}); });
+    }).catch(function() {});
+  }
+
+  sw.register = function() {
+    return Promise.reject(new DOMException('Service workers are disabled', 'SecurityError'));
+  };
+})();
+"#;
+
 /// The registrable domain (eTLD+1) of `host`, e.g. `docs.google.com` -> `google.com`.
 /// Returns `None` for single-label hosts with no eTLD+1 (e.g. `localhost`).
 fn registrable_domain(host: &str) -> Option<&str> {
@@ -619,6 +642,7 @@ pub fn ensure_app_open(
     let webview_builder = webview_builder
         .on_page_load(move |webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
+                let _ = webview.eval(SERVICE_WORKER_BLOCKER_JS);
                 let _ = webview.eval(MEDIA_GUARD_JS);
                 let _ = webview.eval(&window_open_override_js);
                 let _ = webview.eval(crate::commands::shortcuts::build_shortcut_listener_js());
@@ -937,7 +961,23 @@ pub fn webview_reload(app_handle: AppHandle, state: State<'_, AppState>) -> Resu
     let labels = state.webview_labels.lock().map_err(|e| e.to_string())?;
     let label = labels.get(app_id).ok_or("Webview not found")?;
     let webview = app_handle.get_webview(label).ok_or("Webview not found")?;
-    webview.eval("window.location.reload()").map_err(|e| e.to_string())
+    // Unregister service workers before reloading. When the webview is stuck on
+    // WebKit's "Service Worker context closed" error page, a plain
+    // location.reload() routes through the dead SW context and silently fails.
+    // Tearing down the SWs first lets the reload fetch from the network.
+    webview.eval(
+        r#"(function() {
+            function reload() { window.location.reload(); }
+            if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+                navigator.serviceWorker.getRegistrations().then(function(regs) {
+                    Promise.all(regs.map(function(r) { return r.unregister().catch(function() {}); }))
+                        .then(reload, reload);
+                }).catch(reload);
+            } else {
+                reload();
+            }
+        })();"#
+    ).map_err(|e| e.to_string())
 }
 
 /// Destroy a webview to free memory, marking it as slept so the frontend knows it can be reopened.

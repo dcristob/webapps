@@ -43,6 +43,7 @@ fn apply_cosmic_theme() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     storage::ensure_dirs().expect("Failed to create config directories");
+    storage::clear_all_service_worker_data();
 
     // Configure the WebKitGTK DMA-BUF renderer before any GTK/WebKit init.
     // Self-heals on systems where the GPU renderer crashes at startup.
