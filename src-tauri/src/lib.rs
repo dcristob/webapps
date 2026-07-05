@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod media_mode;
 mod render_mode;
 mod state;
 
@@ -45,10 +46,14 @@ pub fn run() {
     storage::ensure_dirs().expect("Failed to create config directories");
     storage::clear_all_service_worker_data();
 
-    // Configure the WebKitGTK DMA-BUF renderer before any GTK/WebKit init.
-    // Self-heals on systems where the GPU renderer crashes at startup.
+    // Configure WebKitGTK renderer + media env before any GTK/WebKit init.
+    // Both self-heal on systems where the GPU renderer or the PipeWire media
+    // device provider crashes the web process.
     #[cfg(target_os = "linux")]
-    render_mode::configure_for_launch();
+    {
+        render_mode::configure_for_launch();
+        media_mode::configure_for_launch();
+    }
 
     let mut spaces = storage::list_spaces().unwrap_or_default();
     if spaces.is_empty() {
