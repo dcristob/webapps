@@ -679,7 +679,7 @@ pub fn ensure_app_open(
         if let Some(webview) = app_handle.get_webview(&label) {
             let _ = webview.with_webview(move |platform_webview| {
                 use webkit2gtk::{
-                    CookieManagerExt, WebViewExt, WebsiteDataManagerExt,
+                    CookieManagerExt, SettingsExt, WebViewExt, WebsiteDataManagerExt,
                 };
                 let wk_webview = platform_webview.inner();
                 if let Some(data_manager) = wk_webview.website_data_manager() {
@@ -688,6 +688,38 @@ pub fn ensure_app_open(
                         cookie_manager.set_accept_policy(webkit2gtk::CookieAcceptPolicy::Always);
                     }
                 }
+
+                // Media-capture self-heal: WebKit's GStreamer/PipeWire device
+                // enumeration SIGSEGVs the web process on some Linux stacks. The
+                // `NoPipewire` tier (handled via env at launch) keeps mic/camera
+                // working via Pulse/ALSA; only the last-resort `Off` tier turns
+                // capture off here.
+                if !crate::media_mode::current_tier().media_stream_enabled() {
+                    if let Some(settings) = wk_webview.settings() {
+                        settings.set_enable_media_stream(false);
+                        settings.set_enable_webrtc(false);
+                    }
+                }
+
+                // On a genuine web-process crash, step down one media tier
+                // (Native → NoPipewire → Off), persist it, apply it live, and
+                // reload once. Non-crashing machines never hit this.
+                wk_webview.connect_web_process_terminated(move |wv, reason| {
+                    if reason != webkit2gtk::WebProcessTerminationReason::Crashed {
+                        return;
+                    }
+                    if let Some(tier) = crate::media_mode::escalate_on_crash() {
+                        if !tier.media_stream_enabled() {
+                            if let Some(settings) = wv.settings() {
+                                settings.set_enable_media_stream(false);
+                                settings.set_enable_webrtc(false);
+                            }
+                        }
+                        // Reloaded web process inherits the updated GST env
+                        // (NoPipewire) and/or the disabled settings (Off).
+                        wv.reload();
+                    }
+                });
 
                 // Media permission requests
                 let app_handle_inner = app_handle_for_perm.clone();
