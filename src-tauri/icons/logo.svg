@@ -4,37 +4,15 @@
       <stop offset="0%" stop-color="#6366F1"/>
       <stop offset="100%" stop-color="#A855F7"/>
     </linearGradient>
+    <linearGradient id="w" x1="160" y1="196" x2="352" y2="330" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5B54E8"/>
+      <stop offset="100%" stop-color="#9333EA"/>
+    </linearGradient>
   </defs>
-
-  <!-- Rounded square background -->
   <rect width="512" height="512" rx="112" fill="url(#bg)"/>
-
-  <!-- Browser window frame - outline only, no fill -->
-  <rect x="100" y="116" width="312" height="280" rx="28" fill="none" stroke="white" stroke-width="10"/>
-
-  <!-- Title bar background -->
-  <rect x="105" y="121" width="302" height="52" rx="23" fill="white" opacity="0.2"/>
-
-  <!-- Title bar separator -->
-  <line x1="100" y1="173" x2="412" y2="173" stroke="white" stroke-width="10"/>
-
-  <!-- Window control dots -->
-  <circle cx="136" cy="146" r="10" fill="white"/>
-  <circle cx="168" cy="146" r="10" fill="#C4B5FD"/>
-  <circle cx="200" cy="146" r="10" fill="#A78BFA"/>
-
-  <!-- Globe circle -->
-  <circle cx="256" cy="292" r="72" fill="none" stroke="white" stroke-width="9"/>
-
-  <!-- Vertical meridian -->
-  <ellipse cx="256" cy="292" rx="36" ry="72" fill="none" stroke="white" stroke-width="6" opacity="0.6"/>
-
-  <!-- Horizontal equator -->
-  <line x1="184" y1="292" x2="328" y2="292" stroke="white" stroke-width="6" stroke-linecap="round" opacity="0.6"/>
-
-  <!-- Upper latitude arc -->
-  <path d="M 196 258 Q 256 242 316 258" fill="none" stroke="white" stroke-width="4.5" stroke-linecap="round" opacity="0.4"/>
-
-  <!-- Lower latitude arc -->
-  <path d="M 196 326 Q 256 342 316 326" fill="none" stroke="white" stroke-width="4.5" stroke-linecap="round" opacity="0.4"/>
+  <circle cx="256" cy="256" r="152" fill="white"/>
+  <!-- Chunky angular (mitered) W -->
+  <path d="M 162 194 L 206 322 L 256 226 L 306 322 L 350 194"
+        fill="none" stroke="url(#w)" stroke-width="44"
+        stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="6"/>
 </svg>
